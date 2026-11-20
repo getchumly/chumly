@@ -1,0 +1,28 @@
+# Release settings for cargo-release (https://github.com/crate-ci/cargo-release).
+#
+# Install once:  cargo install cargo-release --locked
+#
+# Release (from master, with everything committed and CHANGELOG [Unreleased] filled in):
+#   cargo release patch             dry run: shows the CHANGELOG edits, changes nothing
+#   cargo release patch --execute   release
+# Use `minor` instead of `patch` when the network protocol changed (see CHANGELOG.md).
+#
+# --execute bumps the version in Cargo.toml and Cargo.lock, turns [Unreleased]
+# into [X.Y.Z] - date with a new empty [Unreleased] above it, updates the
+# comparison links, commits "release X.Y.Z", tags vX.Y.Z and pushes master and
+# the tag. The tag push runs .github/workflows/release.yml, which builds the
+# binaries and publishes a GitHub release with that CHANGELOG section as notes.
+# Add --no-push to check the commit and tag locally first.
+#
+# All crates share one version (workspace.package.version) and are
+# released together as one commit and one tag. Only `shared` creates
+# the tag and edits CHANGELOG.md (see shared/Cargo.toml), otherwise
+# each crate would try to do it.
+
+allow-branch = ["master"]
+shared-version = true
+consolidate-commits = true
+pre-release-commit-message = "release {{version}}"
+# Nothing goes to crates.io.
+publish = false
+tag = false

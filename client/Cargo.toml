@@ -1,0 +1,53 @@
+[package]
+name = "client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[[bin]]
+name = "chumly"
+path = "src/main.rs"
+
+[dependencies]
+shared.workspace = true
+anyhow.workspace = true
+serde.workspace = true
+toml.workspace = true
+tokio.workspace = true
+quinn.workspace = true
+rustls.workspace = true
+tracing.workspace = true
+tracing-subscriber.workspace = true
+# Render via OpenGL (glow): lighter than wgpu and no DirectX 12 requirement.
+eframe = { version = "0.37", default-features = false, features = ["glow", "accesskit", "clipboard", "default_fonts", "links", "wayland", "x11"] }
+# Only to enable winit's default features that eframe would otherwise enable,
+# e.g. window decorations on Wayland.
+winit = "0.30.13"
+# Bundled icon fonts (🎤 🔇 ⚙ etc.); without them icons render as boxes.
+egui = { version = "0.37", default-features = false, features = ["monochrome_emoji_fonts"] }
+cpal = "0.15"
+opus = "0.4"
+nnnoiseless = { version = "0.5", default-features = false }
+device_query = "2"
+directories = "5"
+sha2 = "0.10"
+# Local time for chat timestamps and dates (chrono is unmaintained, RUSTSEC-2026-0543).
+jiff = "0.2"
+# The system's language for the first start (Windows API / LANG on Linux).
+sys-locale = "0.3"
+bytes = "1"
+# Identity: key derivation (HKDF) and the self-signed client certificate.
+ring = "0.17"
+rcgen = "0.13"
+
+[dev-dependencies]
+tempfile = "3"
+
+[build-dependencies]
+winresource = "0.1"
+
+[target."cfg(windows)".dependencies]
+openh264 = "0.9.9"
+wasapi = "0.27.0"
+windows-capture = "2.0.1"

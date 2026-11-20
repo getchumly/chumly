@@ -1,0 +1,40 @@
+[workspace]
+resolver = "3"
+members = ["client", "server", "shared"]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+# Not published to crates.io.
+publish = false
+
+[workspace.dependencies]
+shared = { path = "shared" }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+# Wire format of control messages: protobuf, so different versions of client
+# and server understand each other (see shared/src/wire.rs).
+prost = { version = "0.14", default-features = false, features = ["std", "derive"] }
+toml = "0.8"
+tokio = { version = "1", features = ["rt-multi-thread", "macros", "sync", "time", "io-util", "net"] }
+quinn = "0.11"
+# No aws-lc-rs: it needs cmake/nasm. Use ring instead.
+rustls = { version = "0.23", default-features = false, features = ["ring", "std", "logging", "tls12"] }
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+[profile.dev]
+# Without optimizations every UI frame is several times more expensive.
+opt-level = 1
+
+[profile.dev.package."*"]
+# Codec, denoiser and TLS are too slow for real time in debug builds.
+opt-level = 3
+
+[profile.release]
+# Strip symbols and debug info from the binary.
+strip = true
+# Whole-program optimization: smaller and faster binary.
+lto = true
+codegen-units = 1

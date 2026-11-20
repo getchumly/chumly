@@ -1,0 +1,57 @@
+[package]
+name = "shared"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+publish.workspace = true
+
+[dependencies]
+serde.workspace = true
+prost.workspace = true
+tokio.workspace = true
+anyhow.workspace = true
+sha2 = "0.10"
+# The GitHub release answer (see release.rs).
+serde_json = "1"
+rustls.workspace = true
+# Public key from certificates (`key_fingerprint`). Same version rustls uses.
+rustls-webpki = "0.103"
+# Update check: one HTTPS request to the GitHub API. Certificates are checked
+# by the system (platform verifier) instead of bundled webpki roots, whose
+# license is not on the deny.toml list; ring, as everywhere else.
+ureq = { version = "3", default-features = false, features = ["rustls-no-provider", "_ring", "platform-verifier"] }
+
+# Secret files readable by the current user only (see fsutil.rs).
+[target."cfg(windows)".dependencies]
+windows-sys = { version = "0.61", features = [
+    "Win32_Foundation",
+    "Win32_Security",
+    "Win32_Security_Authorization",
+    "Win32_Storage_FileSystem",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+rcgen = "0.13"
+tempfile = "3"
+tokio = { workspace = true, features = ["rt", "macros"] }
+
+# Release tag and CHANGELOG update for the whole workspace (see release.toml).
+[package.metadata.release]
+tag = true
+tag-name = "v{{version}}"
+tag-message = "release {{version}}"
+
+# "## [Unreleased]" -> new empty Unreleased + "## [X.Y.Z] - date".
+[[package.metadata.release.pre-release-replacements]]
+file = "../CHANGELOG.md"
+search = '## \[Unreleased\]'
+replace = "## [Unreleased]\n\n## [{{version}}] - {{date}}"
+exactly = 1
+
+# Comparison links at the bottom of the file.
+[[package.metadata.release.pre-release-replacements]]
+file = "../CHANGELOG.md"
+search = '\[Unreleased\]: \.\./\.\./compare/v\S+\.\.\.HEAD'
+replace = "[Unreleased]: ../../compare/v{{version}}...HEAD\n[{{version}}]: ../../compare/v{{prev_version}}...v{{version}}"
+exactly = 1

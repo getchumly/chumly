@@ -1,0 +1,25 @@
+/target
+*.toml.bak
+/scripts
+/design
+# Machine-specific build settings (contain local paths)
+/.cargo/config.toml
+
+# Runtime files created by client/server when run from the repo
+server.toml
+client.toml
+identity.txt
+bans.toml
+*.der
+
+# Editors / OS
+.vscode/
+.idea/
+*.swp
+.DS_Store
+Thumbs.db
+
+# Working folders of tools/build_fonts.py
+/venv/
+/dl/
+/out/

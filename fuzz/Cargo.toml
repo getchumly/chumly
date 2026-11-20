@@ -1,0 +1,65 @@
+# Fuzzing of everything that parses bytes from the network: cargo-fuzz
+# (libFuzzer), nightly Rust, Linux or WSL. Not part of the main workspace.
+# Run from this folder: `cargo fuzz run <target>` (targets in fuzz_targets/);
+# a crash lands in artifacts/<target>/, replay it with `cargo fuzz run <target> <file>`.
+[package]
+name = "chumly-fuzz"
+version = "0.0.0"
+edition = "2024"
+license = "AGPL-3.0-only"
+publish = false
+
+[package.metadata]
+cargo-fuzz = true
+
+[dependencies]
+libfuzzer-sys = "0.4"
+shared = { path = "../shared" }
+
+# A workspace of its own, so the main one does not pick it up.
+[workspace]
+members = ["."]
+
+[profile.release]
+debug = 1
+
+# Messages a client sends: what the server parses from anyone who connects.
+[[bin]]
+name = "client_msg"
+path = "fuzz_targets/client_msg.rs"
+test = false
+doc = false
+bench = false
+
+# Messages a server sends: what clients parse (a hostile server must not
+# crash them).
+[[bin]]
+name = "server_msg"
+path = "fuzz_targets/server_msg.rs"
+test = false
+doc = false
+bench = false
+
+# Media datagrams in both directions and screen share fragments.
+[[bin]]
+name = "media"
+path = "fuzz_targets/media.rs"
+test = false
+doc = false
+bench = false
+
+# The status answer the server list reads before connecting.
+[[bin]]
+name = "status"
+path = "fuzz_targets/status.rs"
+test = false
+doc = false
+bench = false
+
+# The GitHub release answer and version comparison.
+[[bin]]
+name = "release"
+path = "fuzz_targets/release.rs"
+test = false
+doc = false
+bench = false

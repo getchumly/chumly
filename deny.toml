@@ -1,0 +1,58 @@
+# cargo-deny: licenses of dependencies, security advisories, duplicate and
+# unknown crates. Run: cargo deny check. Also runs in CI (.github/workflows/ci.yml).
+
+[graph]
+# Check what we ship: the Windows and Linux builds.
+targets = [
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+    "aarch64-unknown-linux-gnu",
+]
+
+[advisories]
+# RustSec database: vulnerabilities, unmaintained and yanked crates.
+yanked = "deny"
+# Unmaintained (not vulnerable) crates that come in through egui/winit on Linux
+# only, with no replacement available yet. Review when updating egui.
+ignore = [
+    # ttf-parser: winit -> sctk-adwaita (Wayland window decorations) -> ab_glyph.
+    { id = "RUSTSEC-2026-0192", reason = "transitive via winit's Wayland decorations, no fix yet" },
+    # zvariant, zbus_names, zvariant_derive: accesskit_unix (AT-SPI accessibility) -> zbus.
+    { id = "RUSTSEC-2026-0370", reason = "transitive via accesskit on Linux, no fix yet" },
+    { id = "RUSTSEC-2026-0371", reason = "transitive via accesskit on Linux, no fix yet" },
+    { id = "RUSTSEC-2026-0372", reason = "transitive via accesskit on Linux, no fix yet" },
+]
+
+[licenses]
+# Every dependency must be under a license compatible with AGPL-3.0 and allow
+# shipping it in binaries. Crates with a choice ("MIT OR Apache-2.0") pass if
+# any option is listed here.
+allow = [
+    "AGPL-3.0-only",          # Chumly itself
+    "MIT",
+    "Apache-2.0",
+    "Apache-2.0 WITH LLVM-exception",
+    "BSD-2-Clause",
+    "BSD-3-Clause",
+    "0BSD",
+    "ISC",
+    "Zlib",
+    "BSL-1.0",
+    "Unlicense",
+    "Unicode-3.0",
+    "MPL-2.0",                # file-level copyleft, compatible with AGPL
+    "OFL-1.1",                # egui's bundled fonts
+    "Ubuntu-font-1.0",        # egui's bundled fonts
+]
+confidence-threshold = 0.9
+
+[bans]
+# Two versions of one crate are common in a GUI dependency tree: report only.
+multiple-versions = "warn"
+wildcards = "deny"
+# Our own path dependencies have no version.
+allow-wildcard-paths = true
+
+[sources]
+unknown-registry = "deny"
+unknown-git = "deny"

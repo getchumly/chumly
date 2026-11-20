@@ -1,0 +1,151 @@
+# Builds the client and server for all platforms and publishes a GitHub Release.
+# Trigger: push a tag like v0.1.0. Manual runs (Actions tab) only build artifacts.
+name: Release
+
+on:
+  push:
+    tags: ["v*"]
+  workflow_dispatch:
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: client-windows-x64, os: windows-latest, pkg: client, bin: chumly }
+          - { name: client-linux-x64, os: ubuntu-22.04, pkg: client, bin: chumly }
+          - { name: server-windows-x64, os: windows-latest, pkg: server, bin: chumly-server }
+          - { name: server-linux-x64, os: ubuntu-22.04, pkg: server, bin: chumly-server }
+          # Raspberry Pi (64-bit OS). Ubuntu 22.04 keeps glibc old enough for Debian 12.
+          - { name: server-linux-arm64, os: ubuntu-22.04-arm, pkg: server, bin: chumly-server }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.name }}
+
+      - name: Install Linux client dependencies
+        if: matrix.pkg == 'client' && runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libasound2-dev libx11-dev libxkbcommon-dev libwayland-dev
+
+      - name: Build
+        shell: bash
+        env:
+          # Keep CI paths out of panic messages.
+          RUSTFLAGS: --remap-path-prefix=${{ github.workspace }}=chumly
+        run: cargo build --release --locked -p ${{ matrix.pkg }}
+
+      - uses: taiki-e/install-action@v2
+        with:
+          tool: cargo-about@0.9.3
+
+      # Licenses of everything inside the binary, shipped in every archive.
+      - name: Third-party notices
+        shell: bash
+        run: bash .github/scripts/notices/generate.sh ${{ matrix.pkg }} target/release/THIRD-PARTY-NOTICES.txt
+
+      - name: Package
+        shell: bash
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          [[ "$GITHUB_REF_TYPE" == tag ]] || ver="dev"
+          base="chumly-${{ matrix.name }}-$ver"
+          mkdir -p dist
+          if [[ "$RUNNER_OS" == Windows ]]; then
+            exe="target/release/${{ matrix.bin }}.exe"
+            7z a "dist/$base.zip" "./$exe" ./target/release/THIRD-PARTY-NOTICES.txt LICENSE > /dev/null
+            # The Windows client is also published as a standalone exe.
+            if [[ "${{ matrix.pkg }}" == client ]]; then
+              cp "$exe" "dist/$base.exe"
+            fi
+          else
+            tar -czf "dist/$base.tar.gz" -C target/release "${{ matrix.bin }}" THIRD-PARTY-NOTICES.txt -C ../.. LICENSE
+          fi
+          ls -l dist
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ matrix.name }}
+          path: dist/*
+
+  release:
+    needs: build
+    if: startsWith(github.ref, 'refs/tags/')
+    runs-on: ubuntu-latest
+    steps:
+      # Checkout first: it cleans the workspace, the artifacts come after.
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: |
+            CHANGELOG.md
+            minisign.pub
+          sparse-checkout-cone-mode: false
+
+      - uses: actions/download-artifact@v4
+        with:
+          path: dist
+          merge-multiple: true
+
+      # Every file gets a minisign signature (<file>.minisig), plus SHA256SUMS
+      # and its signature. The public key is minisign.pub in the repository;
+      # how to check a download is in the README. The secret key is the
+      # MINISIGN_SECRET_KEY repository secret (the whole .key file); if it has
+      # a password, MINISIGN_PASSWORD. The key pair is made once, by the owner,
+      # not in CI: `minisign -G -p minisign.pub -s chumly.key`.
+      - name: Sign
+        env:
+          MINISIGN_SECRET_KEY: ${{ secrets.MINISIGN_SECRET_KEY }}
+          MINISIGN_PASSWORD: ${{ secrets.MINISIGN_PASSWORD }}
+        run: |
+          if [ -z "$MINISIGN_SECRET_KEY" ]; then
+            echo "::error::MINISIGN_SECRET_KEY is not set: releases must be signed (see the comment above this step)"
+            exit 1
+          fi
+          sudo apt-get update && sudo apt-get install -y minisign
+          umask 077
+          printf '%s\n' "$MINISIGN_SECRET_KEY" > "$RUNNER_TEMP/minisign.key"
+          cd dist
+          sha256sum -- * > SHA256SUMS
+          for f in *; do
+            # minisign reads the password from stdin when it is not a terminal.
+            printf '%s\n' "$MINISIGN_PASSWORD" |
+              minisign -S -s "$RUNNER_TEMP/minisign.key" -m "$f" -t "Chumly $GITHUB_REF_NAME: $f"
+          done
+          rm -f "$RUNNER_TEMP/minisign.key"
+          # Check every signature against the public key in the repository.
+          for f in $(ls | grep -v '\.minisig$'); do
+            minisign -V -q -p ../minisign.pub -m "$f"
+          done
+          ls -l
+
+      # Release description: the "## [X.Y.Z]" section of CHANGELOG.md for this tag.
+      - name: Release notes from CHANGELOG.md
+        run: |
+          ver="${GITHUB_REF_NAME#v}"
+          awk -v v="$ver" '
+            index($0, "## [" v "]") == 1 { on = 1; next }
+            on && /^## \[/ { exit }
+            on && /^\[[^]]+\]: / { exit }
+            on { print }
+          ' CHANGELOG.md > notes.md
+          if ! grep -q '[^[:space:]]' notes.md; then
+            echo "No section for $ver in CHANGELOG.md" > notes.md
+          fi
+          cat notes.md
+
+      - uses: softprops/action-gh-release@v2
+        with:
+          files: dist/*
+          body_path: notes.md

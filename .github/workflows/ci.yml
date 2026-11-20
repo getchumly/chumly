@@ -1,0 +1,93 @@
+# Checks every push and pull request: formatting, clippy (warnings are errors) and tests,
+# on Windows and Linux; cargo-deny for licenses and security advisories. End-to-end tests against a live server (#[ignore])
+# run in the e2e job on Windows (.github/scripts/e2e.ps1). Releases are built by release.yml.
+name: CI
+
+on:
+  push:
+    branches: ["**"]
+  pull_request:
+  workflow_dispatch:
+
+# A newer push to the same branch cancels the run still going.
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_TERM_COLOR: always
+
+jobs:
+  check:
+    name: ${{ matrix.name }}
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - { name: windows, os: windows-latest }
+          # The same image the Linux release is built on.
+          - { name: linux, os: ubuntu-22.04 }
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ci-${{ matrix.name }}
+
+      - name: Install Linux client dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y cmake libasound2-dev libx11-dev libxkbcommon-dev libwayland-dev
+
+      - name: Clippy
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+
+      - name: Tests
+        run: cargo test --workspace --locked
+
+  # End-to-end tests against a live server started on the runner, on Windows
+  # so the screen share part (real H.264 encoding) runs too. The same by
+  # hand: `pwsh .github/scripts/e2e.ps1`.
+  e2e:
+    name: e2e
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: dtolnay/rust-toolchain@stable
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: e2e
+
+      - name: End-to-end tests
+        run: pwsh .github/scripts/e2e.ps1
+
+  # Formatting per rustfmt.toml; fix locally with `cargo fmt`.
+  fmt:
+    name: rustfmt
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+      - run: cargo fmt --all --check
+
+  # Dependency licenses (must fit AGPL-3.0), RustSec advisories, sources.
+  # Rules: deny.toml. New advisories can fail this job without any change here.
+  deny:
+    name: cargo-deny
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: EmbarkStudios/cargo-deny-action@v2
+        with:
+          command: check

@@ -1,0 +1,8 @@
+# Code formatting for `cargo fmt`; CI fails if the code is not formatted.
+# Run `cargo fmt` before committing.
+
+# Wider than the default 100: the code is written with long lines.
+max_width = 120
+# Keep short constructs on one line up to max_width
+# (`if a { x } else { y }`, small struct literals, short call chains).
+use_small_heuristics = "Max"
