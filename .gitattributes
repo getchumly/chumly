@@ -1,0 +1,2 @@
+# Signed test files: their bytes must stay exactly as released (no CRLF on Windows checkouts).
+client/testdata/** binary
