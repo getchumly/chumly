@@ -22,6 +22,9 @@ a client and a server one version step apart keep working.
   frozen picture.
 
 ### Changed
+- Client: screen share bitrate doubled: 5 Mbit/s at 720p 30, 8 at 1080p 30, 12 at 1080p 60.
+  Fast motion in games no longer turns to mush as quickly. The sharer needs that much
+  upload speed; on a slow connection choose 720p.
 - Client: in a narrow channel panel, **Disconnect** becomes an icon while sharing, so
   **Stop sharing** fits.
 

@@ -61,12 +61,15 @@ impl Quality {
         }
     }
 
+    /// Encoder bitrate, bits per second. Fast motion (games, scene cuts)
+    /// turned to mush at half these rates. The server passes up to 16 Mbit/s
+    /// per share, audio included (`SCREEN_BYTES_PER_SEC` in server/src/conn.rs).
     #[cfg_attr(not(windows), allow(dead_code))]
     pub fn bitrate(self) -> u32 {
         match self {
-            Quality::P720F30 => 2_500_000,
-            Quality::P1080F30 => 4_000_000,
-            Quality::P1080F60 => 6_000_000,
+            Quality::P720F30 => 5_000_000,
+            Quality::P1080F30 => 8_000_000,
+            Quality::P1080F60 => 12_000_000,
         }
     }
 }
