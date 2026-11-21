@@ -9,6 +9,7 @@ use shared::release::Release;
 
 use super::*;
 use crate::icons;
+use crate::self_update::{Failure, Install};
 use crate::theme::{self, Button, Dialog, pal};
 use crate::updates::{self, Status};
 
@@ -79,135 +80,337 @@ impl App {
         self.ctx.open_url(egui::OpenUrl::new_tab(url));
     }
 
-    /// The start screen banner above the server list: "Chumly 0.2.0 is
-    /// available", What's new, Skip, Download, ×.
+    /// The newer release being offered or installed (skipped or not).
+    fn update_release(&self) -> Option<Release> {
+        match &self.updates.status {
+            Status::Available(r) => Some(r.clone()),
+            _ => self.updates.latest.clone().filter(|r| shared::release::is_newer(&r.version, shared::VERSION)),
+        }
+    }
+
+    /// The Settings tooltip while an update waits: available or ready.
+    pub(super) fn update_tooltip(&self) -> Option<String> {
+        let t = self.t();
+        if let Install::Ready { version } = self.updates.install.state() {
+            return Some(fill(t.update_ready_tip, &[("v", &version)]));
+        }
+        self.update_offer().map(|r| fill(t.update_tip, &[("v", &r.version)]))
+    }
+
+    /// What the banner (section 45) or the Settings box (section 46) shows for
+    /// the current state; `None` when there is nothing to show.
+    fn update_view(&self, compact: bool) -> Option<UpdateView> {
+        let t = self.t();
+        let lang = self.cfg.language;
+        let v = match self.updates.install.state() {
+            Install::Idle => {
+                let r = self.update_offer()?;
+                let mut links = vec![(t.whats_new, true, Act::Notes)];
+                if !compact {
+                    links.push((t.skip_version, false, Act::Skip));
+                }
+                UpdateView {
+                    glyph: Glyph::Icon(icons::FILL_ARROW_CIRCLE_DOWN, true),
+                    title: if compact {
+                        fill(t.update_available_short, &[("v", &r.version)])
+                    } else {
+                        fill(t.update_title, &[("v", &r.version)])
+                    },
+                    sub: (!compact).then(|| fill(t.update_you_have, &[("v", shared::VERSION)])),
+                    closable: true,
+                    primary: Some((t.update_and_restart, Act::Install)),
+                    links,
+                    ..UpdateView::new(Tone::Accent)
+                }
+            }
+            Install::Downloading { done, total } => {
+                let title = match total {
+                    Some(total) => {
+                        fill(t.update_downloading, &[("done", &mb(done, lang, 1)), ("total", &mb(total, lang, 0))])
+                    }
+                    None => fill(t.update_downloading_unknown, &[("done", &mb(done, lang, 1))]),
+                };
+                let progress = total.filter(|t| *t > 0).map(|total| {
+                    let f = (done as f32 / total as f32).clamp(0.0, 1.0);
+                    (f, format!("{:.0}%", f * 100.0))
+                });
+                UpdateView {
+                    glyph: Glyph::Spinner,
+                    title,
+                    progress,
+                    secondary: Some((t.cancel, icons::X, Act::Cancel)),
+                    ..UpdateView::new(Tone::Accent)
+                }
+            }
+            Install::Checking { total } => UpdateView {
+                glyph: Glyph::Spinner,
+                title: t.update_checking_file.to_string(),
+                sub: (!compact).then(|| t.update_checking_sub.to_string()),
+                progress: Some((1.0, format!("{} {}", mb(total, lang, 0), t.megabytes))),
+                ..UpdateView::new(Tone::Accent)
+            },
+            Install::Ready { version } => UpdateView {
+                glyph: Glyph::Icon(icons::FILL_CHECK_CIRCLE, true),
+                title: fill(t.update_ready, &[("v", &version)]),
+                closable: true,
+                primary: Some((t.update_restart, Act::Restart)),
+                note: Some(t.update_later_note),
+                ..UpdateView::new(Tone::Accent)
+            },
+            Install::Failed(Failure::Network) => UpdateView {
+                glyph: Glyph::Icon(icons::CLOUD_SLASH, false),
+                title: t.update_err_net.to_string(),
+                sub: (!compact).then(|| t.update_err_net_sub.to_string()),
+                closable: true,
+                secondary: Some((t.update_retry, icons::ARROWS_CLOCKWISE, Act::Install)),
+                links: vec![(t.update_manual, false, Act::Manual)],
+                ..UpdateView::new(Tone::Neutral)
+            },
+            Install::Failed(Failure::Signature) => UpdateView {
+                glyph: Glyph::Icon(icons::FILL_SHIELD_WARNING, true),
+                title: t.update_err_sig.to_string(),
+                sub: (!compact).then(|| t.update_err_sig_sub.to_string()),
+                closable: true,
+                secondary: Some((t.update_manual, icons::ARROW_SQUARE_OUT, Act::Manual)),
+                ..UpdateView::new(Tone::Warn)
+            },
+            Install::Failed(Failure::Folder) => UpdateView {
+                glyph: Glyph::Icon(icons::FOLDER_LOCK, false),
+                title: t.update_err_dir.to_string(),
+                sub: (!compact).then(|| {
+                    fill(t.update_err_dir_sub, &[("dir", &self.updates.install.folder()), ("file", &exe_name())])
+                }),
+                closable: true,
+                secondary: Some((t.update_manual, icons::ARROW_SQUARE_OUT, Act::Manual)),
+                ..UpdateView::new(Tone::Neutral)
+            },
+        };
+        Some(v)
+    }
+
+    /// Carries out a click on the banner, the Settings box or "What's new".
+    fn update_act(&mut self, act: Act) {
+        match act {
+            Act::Install => {
+                if let Some(r) = self.update_release() {
+                    let ctx = self.ctx.clone();
+                    self.updates.install.start(&r, &ctx);
+                }
+            }
+            Act::Restart => {
+                // In a call nothing restarts without a confirmation (section 47).
+                if self.session.is_some() {
+                    self.updates.confirm_restart = true;
+                } else {
+                    self.restart_for_update();
+                }
+            }
+            Act::Cancel => self.updates.install.cancel(),
+            Act::Manual => {
+                if let Some(r) = self.update_release() {
+                    self.open(updates::download_url(&r));
+                }
+            }
+            Act::Notes => self.updates.notes_open = true,
+            Act::Skip => {
+                if let Some(r) = self.update_offer() {
+                    self.cfg.skipped_version = Some(r.version.clone());
+                    self.cfg_dirty = true;
+                }
+            }
+        }
+    }
+
+    /// Restarts into the installed update: disconnects like closing the app
+    /// does, so the new instance can connect with the same nickname, saves
+    /// the settings, starts the new executable and closes this one.
+    fn restart_for_update(&mut self) {
+        if self.conn != ConnState::Idle {
+            let _ = self.net.send(NetCommand::Disconnect);
+            std::thread::sleep(Duration::from_millis(400));
+        }
+        self.save_config();
+        match self.updates.install.restart() {
+            Ok(()) => self.ctx.send_viewport_cmd(egui::ViewportCommand::Close),
+            Err(e) => {
+                tracing::error!("restart after update: {e}");
+                let msg = fill(self.t().restart_failed, &[("err", &e.to_string())]);
+                self.toast_err(msg);
+            }
+        }
+    }
+
+    /// The start screen banner above the server list (section 45), or the
+    /// one-time "Updated to …" line after an update (section 48).
     pub(super) fn update_banner(&mut self, ui: &mut egui::Ui) {
+        if self.updates.just_updated {
+            self.updated_line(ui);
+            return;
+        }
         if self.updates.banner_closed {
             return;
         }
-        let Some(r) = self.update_offer().cloned() else { return };
+        let Some(view) = self.update_view(false) else { return };
+        match draw_update_view(ui, &view, false) {
+            Some(Click::Close) => {
+                // × on Ready hides the banner; the update still runs on the next start.
+                self.updates.install.dismiss();
+                self.updates.banner_closed = true;
+            }
+            Some(Click::Act(act)) => self.update_act(act),
+            None => {}
+        }
+    }
+
+    /// "✓ Updated to 0.3.0 · What's new ×" in the banner slot (section 48).
+    fn updated_line(&mut self, ui: &mut egui::Ui) {
         let t = self.t();
         let p = pal(ui);
-        let dark = ui.visuals().dark_mode;
-        let (bg, border) = if dark {
-            (p.accent.gamma_multiply(0.08), p.accent.gamma_multiply(0.35))
-        } else {
-            (p.accent.gamma_multiply(0.12), p.accent_text.gamma_multiply(0.3))
-        };
-        let mut skip = false;
-        let mut close = false;
+        let (bg, border) = Tone::Accent.colors(ui);
         let mut notes = false;
-        let mut download = false;
+        let mut close = false;
         egui::Frame::new()
             .fill(bg)
             .stroke(Stroke::new(1.0, border))
             .corner_radius(CornerRadius::same(theme::R_MD))
-            .inner_margin(Margin { left: 14, right: 8, top: 10, bottom: 10 })
+            .inner_margin(Margin { left: 12, right: 6, top: 0, bottom: 0 })
             .show(ui, |ui| {
-                ui.set_width(ui.available_width());
-                ui.horizontal(|ui| {
-                    ui.spacing_mut().item_spacing.x = 12.0;
-                    ui.label(
-                        RichText::new(icons::FILL_ARROW_CIRCLE_DOWN)
-                            .family(theme::icons_fill())
-                            .size(20.0)
-                            .color(p.accent_text),
-                    );
-                    let right_w = 28.0 + 8.0 + theme::button_width(ui, t.download, Some(icons::ARROW_SQUARE_OUT));
-                    ui.allocate_ui(vec2((ui.available_width() - right_w - 12.0).max(80.0), 40.0), |ui| {
-                        ui.vertical(|ui| {
-                            ui.spacing_mut().item_spacing.y = 2.0;
-                            ui.label(theme::text_semibold(fill(t.update_title, &[("v", &r.version)]), 13.0));
-                            ui.horizontal_wrapped(|ui| {
-                                ui.spacing_mut().item_spacing.x = 0.0;
-                                let have = format!("{} · ", fill(t.update_you_have, &[("v", shared::VERSION)]));
-                                ui.label(theme::text(have, 12.0).color(p.t2));
-                                notes = link(ui, t.whats_new, 12.0, p.accent_text, false);
-                                ui.label(theme::text(" · ", 12.0).color(p.t2));
-                                skip = link(ui, t.skip_version, 12.0, p.t2, true);
-                            });
-                        });
-                    });
-                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                        ui.spacing_mut().item_spacing.x = 8.0;
-                        if ui.add(Button::icon(icons::X).height(28.0)).clicked() {
-                            close = true;
-                        }
-                        download =
-                            ui.add(Button::primary(t.download).with_icon(icons::ARROW_SQUARE_OUT).small()).clicked();
-                    });
+                let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 38.0), Sense::hover());
+                let mut row = ui.new_child(
+                    egui::UiBuilder::new().max_rect(rect).layout(egui::Layout::left_to_right(egui::Align::Center)),
+                );
+                row.spacing_mut().item_spacing.x = 10.0;
+                row.label(
+                    RichText::new(icons::FILL_CHECK_CIRCLE).family(theme::icons_fill()).size(18.0).color(p.accent_text),
+                );
+                row.label(theme::text_semibold(fill(t.updated_to, &[("v", shared::VERSION)]), 13.0));
+                notes = link(&mut row, t.whats_new, 12.5, p.accent_text, false);
+                row.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
+                    close = ui.add(Button::icon(icons::X).height(28.0)).clicked();
                 });
             });
-        if download {
-            self.open(updates::download_url(&r));
-        }
         if notes {
-            self.updates.notes_open = true;
-        }
-        if skip {
-            self.cfg.skipped_version = Some(r.version.clone());
-            self.cfg_dirty = true;
+            // The notes of this version, if the check already fetched them.
+            if self.updates.latest.as_ref().is_some_and(|r| r.version == shared::VERSION) {
+                self.updates.notes_open = true;
+            } else {
+                self.open(&updates::current_release_page());
+            }
         }
         if close {
-            self.updates.banner_closed = true;
+            self.updates.just_updated = false;
         }
     }
 
-    /// "What's new in 0.2.0": the release notes, Download, View on GitHub.
+    /// The restart confirmation while connected (section 47). Later is the
+    /// default: the safe choice is not to drop the call.
+    pub(super) fn draw_restart_confirm(&mut self, ctx: &egui::Context) {
+        if !self.updates.confirm_restart {
+            return;
+        }
+        let Some(server) = self.session.as_ref().map(|s| s.server_name.clone()) else {
+            // Disconnected meanwhile: nothing to confirm.
+            self.updates.confirm_restart = false;
+            self.restart_for_update();
+            return;
+        };
+        let t = self.t();
+        let p = theme::palette(ctx.global_style().visuals.dark_mode);
+        let mut later = false;
+        let mut restart = false;
+        let resp = Dialog::new("restart-confirm", t.restart_title)
+            .icon(icons::ARROWS_CLOCKWISE, p.accent_text)
+            .width(440.0)
+            .closable()
+            .show(
+                ctx,
+                |ui| {
+                    ui.spacing_mut().item_spacing.y = 12.0;
+                    let mut job = LayoutJob::default();
+                    let font = FontId::new(13.0, FontFamily::Proportional);
+                    job.append(&format!("{} ", t.restart_lead), 0.0, TextFormat::simple(font.clone(), p.t1));
+                    job.append(&server, 0.0, TextFormat::simple(FontId::new(13.0, theme::semibold()), p.t1));
+                    job.append(".", 0.0, TextFormat::simple(font, p.t1));
+                    job.wrap.max_width = ui.available_width();
+                    ui.label(job);
+                    ui.horizontal_top(|ui| {
+                        ui.spacing_mut().item_spacing.x = 8.0;
+                        ui.label(theme::text(icons::INFO, 15.0).color(p.t3));
+                        ui.add(egui::Label::new(theme::text(t.restart_sub, 12.5).color(p.t2)).wrap());
+                    });
+                },
+                |ui| {
+                    later = ui.add(Button::primary(t.restart_later)).clicked();
+                    restart = ui.add(Button::secondary(t.restart_now).with_icon(icons::ARROWS_CLOCKWISE)).clicked();
+                },
+            );
+        if later || resp.close_requested {
+            self.updates.confirm_restart = false;
+        }
+        if restart {
+            self.updates.confirm_restart = false;
+            self.restart_for_update();
+        }
+    }
+
+    /// "What's new in 0.2.0": the release notes of the offered release, or of
+    /// this version after an update. Update and restart, Close, GitHub.
     pub(super) fn draw_whats_new(&mut self, ctx: &egui::Context) {
         if !self.updates.notes_open {
             return;
         }
         let r = match &self.updates.status {
-            Status::Available(r) => r.clone(),
-            _ => {
-                self.updates.notes_open = false;
-                return;
-            }
+            Status::Available(r) => Some(r.clone()),
+            _ => self.updates.latest.clone().filter(|r| r.version == shared::VERSION),
+        };
+        let Some(r) = r else {
+            self.updates.notes_open = false;
+            return;
         };
         let t = self.t();
         let p = theme::palette(ctx.global_style().visuals.dark_mode);
         let lang = self.cfg.language;
+        let newer = shared::release::is_newer(&r.version, shared::VERSION);
+        let action = match self.updates.install.state() {
+            Install::Idle | Install::Failed(_) if newer => Some((t.update_and_restart, Act::Install)),
+            Install::Ready { .. } => Some((t.update_restart, Act::Restart)),
+            _ => None,
+        };
         let mut close = false;
-        let mut download = false;
+        let mut act = None;
         let mut page = false;
         let resp =
             Dialog::new("whats-new", fill(t.whats_new_title, &[("v", &r.version)])).width(520.0).closable().show(
                 ctx,
                 |ui| {
-                    let meta = format!("{} → {} · {}", shared::VERSION, r.version, fmt_date(lang, &r.date));
+                    let meta = if newer {
+                        format!("{} → {} · {}", shared::VERSION, r.version, fmt_date(lang, &r.date))
+                    } else {
+                        format!("{} · {}", r.version, fmt_date(lang, &r.date))
+                    };
                     ui.label(theme::mono(meta, 12.0).color(p.t3));
                     egui::ScrollArea::vertical().max_height(340.0).auto_shrink([false, true]).show(ui, |ui| {
                         markdown(ui, &r.notes);
                     });
-                    egui::Frame::new()
-                        .fill(p.bg2)
-                        .stroke(Stroke::new(1.0, p.border))
-                        .corner_radius(CornerRadius::same(theme::R_SM))
-                        .inner_margin(Margin::symmetric(10, 8))
-                        .show(ui, |ui| {
-                            ui.set_width(ui.available_width());
-                            ui.horizontal(|ui| {
-                                ui.spacing_mut().item_spacing.x = 8.0;
-                                ui.label(theme::text(icons::INFO, 14.0).color(p.t3));
-                                let hint = fill(t.update_replace_hint, &[("file", &exe_name())]);
-                                ui.add(egui::Label::new(theme::text(hint, 12.0).color(p.t2)).wrap());
-                            });
-                        });
                 },
                 |ui| {
-                    download = ui.add(Button::primary(t.download).with_icon(icons::ARROW_SQUARE_OUT)).clicked();
+                    if let Some((label, a)) = action
+                        && ui.add(Button::primary(label).with_icon(icons::ARROWS_CLOCKWISE)).clicked()
+                    {
+                        act = Some(a);
+                    }
                     close = ui.add(Button::secondary(t.close)).clicked();
                     ui.with_layout(egui::Layout::left_to_right(egui::Align::Center), |ui| {
                         page = link(ui, t.open_on_github, 12.0, p.t3, false);
                     });
                 },
             );
-        if download {
-            self.open(updates::download_url(&r));
-        }
         if page {
             self.open(&r.page);
+        }
+        if let Some(a) = act {
+            self.updates.notes_open = false;
+            self.update_act(a);
         }
         if close || resp.close_requested {
             self.updates.notes_open = false;
@@ -219,7 +422,7 @@ impl App {
     pub(super) fn settings_updates(&mut self, ui: &mut egui::Ui) {
         let t = self.t();
         let p = pal(ui);
-        let waiting = self.update_offer().is_some();
+        let waiting = self.update_tooltip().is_some();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 8.0;
             ui.label(theme::text_semibold(t.updates_title, 13.0));
@@ -244,8 +447,14 @@ impl App {
                 ui.end_row();
             });
         ui.add(egui::Label::new(theme::text(t.updates_privacy, 12.0).color(p.t3)).wrap());
-        let checking = matches!(self.updates.status, Status::Checking);
         let mut action: Option<UpdateClick> = None;
+        // The offered update and its install, the same state as the banner.
+        if let Some(view) = self.update_view(true)
+            && let Some(Click::Act(act)) = draw_update_view(ui, &view, true)
+        {
+            action = Some(UpdateClick::Box(act));
+        }
+        let checking = matches!(self.updates.status, Status::Checking) || self.updates.install.busy();
         ui.horizontal(|ui| {
             ui.spacing_mut().item_spacing.x = 12.0;
             let now = Button::secondary(t.check_now).with_icon(icons::ARROWS_CLOCKWISE).small();
@@ -270,22 +479,8 @@ impl App {
                         action = Some(UpdateClick::Unskip);
                     }
                 }
-                Status::Available(r) => {
-                    ui.label(
-                        RichText::new(icons::FILL_ARROW_CIRCLE_DOWN)
-                            .family(theme::icons_fill())
-                            .size(15.0)
-                            .color(p.accent_text),
-                    );
-                    ui.label(theme::text(fill(t.update_newer, &[("v", &r.version)]), 12.5).color(p.t1));
-                    if link(ui, t.download, 12.5, p.accent_text, false) {
-                        action = Some(UpdateClick::Download(updates::download_url(r).to_string()));
-                    }
-                    ui.label(theme::text("·", 12.5).color(p.t3));
-                    if link(ui, t.whats_new, 12.5, p.accent_text, false) {
-                        action = Some(UpdateClick::Notes);
-                    }
-                }
+                // Shown in the box above.
+                Status::Available(_) => {}
                 Status::Failed => {
                     ui.label(theme::text(icons::CLOUD_SLASH, 15.0).color(p.t3));
                     ui.label(theme::text(t.update_failed, 12.5).color(p.t2));
@@ -305,8 +500,7 @@ impl App {
                 self.cfg.skipped_version = None;
                 self.cfg_dirty = true;
             }
-            Some(UpdateClick::Download(url)) => self.open(&url),
-            Some(UpdateClick::Notes) => self.updates.notes_open = true,
+            Some(UpdateClick::Box(act)) => self.update_act(act),
             None => {}
         }
     }
@@ -382,8 +576,220 @@ impl App {
 enum UpdateClick {
     Check,
     Unskip,
-    Download(String),
+    Box(Act),
+}
+
+/// The tint of the update banner by state (section 45): good news is the
+/// accent, a network or folder problem is neutral, a failed signature warns.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum Tone {
+    Accent,
+    Neutral,
+    Warn,
+}
+
+impl Tone {
+    /// Fill and border.
+    fn colors(self, ui: &egui::Ui) -> (Color32, Color32) {
+        let p = pal(ui);
+        let dark = ui.visuals().dark_mode;
+        match self {
+            Tone::Accent if dark => (p.accent.gamma_multiply(0.08), p.accent.gamma_multiply(0.35)),
+            Tone::Accent => (p.accent.gamma_multiply(0.12), p.accent_text.gamma_multiply(0.3)),
+            Tone::Neutral => (p.field, p.border),
+            Tone::Warn if dark => (p.warn.gamma_multiply(0.08), p.warn.gamma_multiply(0.45)),
+            Tone::Warn => (p.warn.gamma_multiply(0.07), p.warn.gamma_multiply(0.4)),
+        }
+    }
+
+    fn icon(self, ui: &egui::Ui, compact: bool) -> Color32 {
+        let p = pal(ui);
+        match self {
+            Tone::Accent => p.accent_text,
+            Tone::Neutral if compact => p.t3,
+            Tone::Neutral => p.t2,
+            Tone::Warn => p.warn,
+        }
+    }
+}
+
+enum Glyph {
+    Spinner,
+    /// An icon; `true`: from the Fill set.
+    Icon(&'static str, bool),
+}
+
+/// What a button or link of the update banner does.
+#[derive(Clone, Copy, PartialEq, Eq, Debug)]
+enum Act {
+    Install,
+    Restart,
+    Cancel,
+    Manual,
     Notes,
+    Skip,
+}
+
+enum Click {
+    Close,
+    Act(Act),
+}
+
+/// One state of the update banner / Settings box: icon slot, title (and a
+/// second line), progress, actions. The layout is the same in every state, so
+/// it does not jump when the state changes.
+struct UpdateView {
+    tone: Tone,
+    glyph: Glyph,
+    title: String,
+    sub: Option<String>,
+    /// × in the corner (the banner only).
+    closable: bool,
+    /// Done fraction and the label right of the bar.
+    progress: Option<(f32, String)>,
+    primary: Option<(&'static str, Act)>,
+    secondary: Option<(&'static str, &'static str, Act)>,
+    /// Text links: label, strong (accent) or quiet (underlined), action.
+    links: Vec<(&'static str, bool, Act)>,
+    note: Option<&'static str>,
+}
+
+impl UpdateView {
+    fn new(tone: Tone) -> Self {
+        Self {
+            tone,
+            glyph: Glyph::Spinner,
+            title: String::new(),
+            sub: None,
+            closable: false,
+            progress: None,
+            primary: None,
+            secondary: None,
+            links: Vec::new(),
+            note: None,
+        }
+    }
+}
+
+/// "6.2" / "6,2": megabytes with `decimals` digits in the language's style.
+fn mb(bytes: u64, lang: Language, decimals: usize) -> String {
+    let s = format!("{:.*}", decimals, bytes as f64 / (1024.0 * 1024.0));
+    match lang {
+        Language::Ru => s.replace('.', ","),
+        Language::En => s,
+    }
+}
+
+/// Draws the update banner (section 45) or, `compact`, the box in Settings
+/// (section 46).
+fn draw_update_view(ui: &mut egui::Ui, v: &UpdateView, compact: bool) -> Option<Click> {
+    let p = pal(ui);
+    let (bg, border) = v.tone.colors(ui);
+    let icon_color = v.tone.icon(ui, compact);
+    let (slot, gap, indent) = if compact { (15.0, 8.0, 21.0) } else { (20.0, 12.0, 32.0) };
+    let closable = v.closable && !compact;
+    let mut click = None;
+    let margin = if compact { Margin::symmetric(12, 10) } else { Margin { left: 14, right: 8, top: 12, bottom: 12 } };
+    egui::Frame::new()
+        .fill(bg)
+        .stroke(Stroke::new(1.0, border))
+        .corner_radius(CornerRadius::same(theme::R_MD))
+        .inner_margin(margin)
+        .show(ui, |ui| {
+            ui.set_width(ui.available_width());
+            ui.spacing_mut().item_spacing.y = if compact { 8.0 } else { 9.0 };
+            ui.horizontal_top(|ui| {
+                ui.spacing_mut().item_spacing.x = gap;
+                let (r, _) = ui.allocate_exact_size(vec2(slot, slot + 2.0), Sense::hover());
+                match v.glyph {
+                    Glyph::Spinner => {
+                        let s = if compact { 13.0 } else { 16.0 };
+                        egui::Spinner::new()
+                            .size(s)
+                            .color(p.accent_text)
+                            .paint_at(ui, Rect::from_center_size(r.center(), vec2(s, s)));
+                    }
+                    Glyph::Icon(g, filled) => {
+                        let family = if filled { theme::icons_fill() } else { FontFamily::Proportional };
+                        let g = ui.painter().layout_no_wrap(g.to_owned(), FontId::new(slot, family), icon_color);
+                        ui.painter().galley(r.center() - g.size() / 2.0, g, Color32::PLACEHOLDER);
+                    }
+                }
+                let text_w = (ui.available_width() - if closable { 28.0 + gap } else { 0.0 }).max(60.0);
+                ui.vertical(|ui| {
+                    ui.set_width(text_w);
+                    ui.spacing_mut().item_spacing.y = 3.0;
+                    let title = if compact {
+                        let color = if v.tone == Tone::Neutral { p.t2 } else { p.t1 };
+                        theme::text(&v.title, 12.5).color(color)
+                    } else {
+                        theme::text_semibold(&v.title, 13.0)
+                    };
+                    ui.add(egui::Label::new(title).wrap());
+                    if let Some(sub) = &v.sub {
+                        ui.add(egui::Label::new(theme::text(sub, 12.0).color(p.t2)).wrap());
+                    }
+                });
+                if closable {
+                    ui.with_layout(egui::Layout::right_to_left(egui::Align::Min), |ui| {
+                        if ui.add(Button::icon(icons::X).height(28.0)).clicked() {
+                            click = Some(Click::Close);
+                        }
+                    });
+                }
+            });
+            if let Some((done, label)) = &v.progress {
+                let thick: f32 = if compact { 4.0 } else { 6.0 };
+                let (row, _) = ui.allocate_exact_size(vec2(ui.available_width(), thick.max(14.0)), Sense::hover());
+                let mut right = row.right() - if compact { 0.0 } else { 6.0 };
+                if !compact {
+                    let g = ui.painter().layout_no_wrap(label.clone(), FontId::new(11.0, FontFamily::Monospace), p.t2);
+                    right -= g.size().x;
+                    ui.painter().galley(pos2(right, row.center().y - g.size().y / 2.0), g, Color32::PLACEHOLDER);
+                    right -= 10.0;
+                }
+                let track = Rect::from_min_max(
+                    pos2(row.left() + indent, row.center().y - thick / 2.0),
+                    pos2(right, row.center().y + thick / 2.0),
+                );
+                let radius = CornerRadius::same((thick / 2.0) as u8);
+                ui.painter().rect_filled(track, radius, p.sel);
+                let mut bar = track;
+                bar.set_width(track.width() * done);
+                ui.painter().rect_filled(bar, radius, p.accent);
+            }
+            let has_actions = v.primary.is_some() || v.secondary.is_some() || !v.links.is_empty() || v.note.is_some();
+            if has_actions {
+                egui::Frame::new().inner_margin(Margin { left: indent as i8, ..Default::default() }).show(ui, |ui| {
+                    ui.horizontal_wrapped(|ui| {
+                        ui.spacing_mut().item_spacing = vec2(8.0, 6.0);
+                        let (h, size) = if compact { (28.0, 12.5) } else { (30.0, 13.0) };
+                        if let Some((label, act)) = v.primary {
+                            let b = Button::primary(label).with_icon(icons::ARROWS_CLOCKWISE).height(h).font_size(size);
+                            if ui.add(b).clicked() {
+                                click = Some(Click::Act(act));
+                            }
+                        }
+                        if let Some((label, icon, act)) = v.secondary {
+                            let b = Button::secondary(label).with_icon(icon).height(h).font_size(size);
+                            if ui.add(b).clicked() {
+                                click = Some(Click::Act(act));
+                            }
+                        }
+                        for (label, strong, act) in &v.links {
+                            let color = if *strong { p.accent_text } else { p.t2 };
+                            if link(ui, label, 12.5, color, !strong) {
+                                click = Some(Click::Act(*act));
+                            }
+                        }
+                        if let Some(note) = v.note {
+                            ui.label(theme::text(note, 12.0).color(p.t3));
+                        }
+                    });
+                });
+            }
+        });
+    click
 }
 
 /// A subset of markdown for release notes: `#` headings, `-` / `*` bullets

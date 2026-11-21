@@ -136,14 +136,14 @@ impl App {
                             ui.add_space(8.0);
                         }
                         let resp = ui.add(Button::ghost(t.settings).with_icon(icons::GEAR_SIX).height(30.0));
-                        let resp = match self.update_offer() {
-                            Some(r) => {
+                        let resp = match self.update_tooltip() {
+                            Some(tip) => {
                                 super::updates_ui::icon_dot(
                                     ui,
                                     resp.rect,
                                     if resp.hovered() { p.hover } else { p.bg2 },
                                 );
-                                resp.on_hover_text(fill(t.update_tip, &[("v", &r.version)]))
+                                resp.on_hover_text(tip)
                             }
                             None => resp,
                         };

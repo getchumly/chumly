@@ -12,6 +12,7 @@ mod identity;
 mod net;
 mod ptt;
 mod screen;
+mod self_update;
 mod theme;
 mod timefmt;
 mod updates;

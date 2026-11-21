@@ -1,12 +1,14 @@
 //! Client update check: asks GitHub for the latest release at launch and
-//! once a day (if on in the settings), or on demand ("Check now"). The
-//! client is a single file without an installer, so an update is a link to
-//! the release file; the user replaces the exe.
+//! once a day (if on in the settings), or on demand ("Check now"). Installing
+//! a newer release is `crate::self_update`; manual download stays as the
+//! fallback.
 
 use std::sync::mpsc;
 use std::time::{Duration, Instant};
 
 use shared::release::{self, Release};
+
+use crate::self_update::Installer;
 
 /// Automatic checks: at launch and then this often.
 const AUTO_EVERY: Duration = Duration::from_secs(24 * 60 * 60);
@@ -34,6 +36,15 @@ pub struct Updates {
     pub banner_closed: bool,
     /// The "What's new" dialog.
     pub notes_open: bool,
+    /// Download, check and install of the offered release.
+    pub install: Installer,
+    /// The latest release, newer or not: "What's new" after an update.
+    pub latest: Option<Release>,
+    /// This launch runs a newer version than the last one: "Updated to …"
+    /// on the start screen until closed or the first connect.
+    pub just_updated: bool,
+    /// "Restart now? You will be disconnected" (pressed Restart while connected).
+    pub confirm_restart: bool,
 }
 
 impl Updates {
@@ -43,6 +54,9 @@ impl Updates {
             && let Ok(result) = rx.try_recv()
         {
             self.rx = None;
+            if let Ok(r) = &result {
+                self.latest = Some(r.clone());
+            }
             self.status = match result {
                 Ok(r) if release::is_newer(&r.version, shared::VERSION) => {
                     tracing::info!("update available: {} ({})", r.version, r.page);
@@ -92,6 +106,12 @@ impl Updates {
             _ => None,
         }
     }
+}
+
+/// The release page of the version this build is: "What's new" after an
+/// update when no check ran yet.
+pub fn current_release_page() -> String {
+    format!("https://github.com/{}/releases/tag/v{}", release::RELEASES_REPO, shared::VERSION)
 }
 
 /// The file to download for this system, or the release page.

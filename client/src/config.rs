@@ -190,6 +190,9 @@ pub struct ClientConfig {
     pub check_updates: bool,
     /// "Skip this version": no notice for it until a newer one comes out.
     pub skipped_version: Option<String>,
+    /// The version that last ran: a newer one now means it was updated
+    /// ("Updated to …" on the start screen).
+    pub last_version: Option<String>,
     /// The crash report whose banner was closed (its file name).
     pub crash_dismissed: Option<String>,
     pub audio: AudioConfig,
@@ -215,6 +218,7 @@ impl Default for ClientConfig {
             auto_connect: false,
             check_updates: true,
             skipped_version: None,
+            last_version: None,
             crash_dismissed: None,
             audio: AudioConfig::default(),
             // The empty state invites to add one; no placeholder bookmark.

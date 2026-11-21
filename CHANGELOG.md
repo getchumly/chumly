@@ -11,6 +11,18 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+**Update:** client only (servers can stay). This is the last update you install by hand:
+from this version on the client updates itself.
+
+### Added
+- Client: **Update and restart**. The client downloads the new version, checks its
+  signature against the release key built into the client (and that it is the file of that
+  version), replaces itself and restarts. Progress and Cancel while downloading. In a call,
+  it asks before restarting ("You will be disconnected from …"); **Later** installs it on
+  the next start. A file with a wrong signature is never installed; a network error or a
+  folder without write access offers the manual download instead. Works on Windows and Linux.
+- Client: "Updated to X" with What's new on the start screen after an update.
+
 ## [0.1.1] - 2026-11-21
 
 **Update:** client only (servers can stay).
