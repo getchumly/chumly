@@ -11,6 +11,8 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+## [0.1.1] - 2026-11-21
+
 **Update:** client only (servers can stay).
 
 ### Added
@@ -53,5 +55,6 @@ Initial release.
 - Portable mode, light and dark themes, English and Russian UI.
 - Releases are signed with minisign.
 
-[Unreleased]: ../../compare/v0.1.0...HEAD
+[Unreleased]: ../../compare/v0.1.1...HEAD
+[0.1.1]: ../../compare/v0.1.0...v0.1.1
 [0.1.0]: ../../releases/tag/v0.1.0
