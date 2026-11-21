@@ -56,10 +56,10 @@ impl App {
         role_chips(ui, t, s, actions);
         let resp = ui.add(Button::ghost(t.settings).with_icon(icons::GEAR_SIX).small());
         // A waiting update: a quiet dot, no toast over the game.
-        let resp = match self.updates.offer(self.cfg.skipped_version.as_deref()) {
-            Some(r) => {
+        let resp = match self.update_tooltip() {
+            Some(tip) => {
                 crate::app::updates_ui::icon_dot(ui, resp.rect, if resp.hovered() { p.hover } else { p.bg2 });
-                resp.on_hover_text(fill(t.update_tip, &[("v", &r.version)]))
+                resp.on_hover_text(tip)
             }
             None => resp,
         };

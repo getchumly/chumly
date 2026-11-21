@@ -61,6 +61,8 @@ impl App {
 
     pub(super) fn connect(&mut self, index: usize) {
         let Some(bm) = self.cfg.servers.get(index).cloned() else { return };
+        // "Updated to …" shows until the first connect (section 48).
+        self.updates.just_updated = false;
         let t = self.t();
         if bm.address.trim().is_empty() || !shared::validate_nickname(&bm.nickname) {
             let error = if bm.address.trim().is_empty() {

@@ -32,6 +32,7 @@ pub const CORNERS_OUT: &str = "\u{E1D0}";
 pub const CPU: &str = "\u{E610}";
 pub const EYE: &str = "\u{E220}";
 pub const EYE_SLASH: &str = "\u{E224}";
+pub const FOLDER_LOCK: &str = "\u{EA3C}";
 pub const FOLDER_OPEN: &str = "\u{E256}";
 pub const GEAR_SIX: &str = "\u{E272}";
 pub const HASH: &str = "\u{E2A2}";

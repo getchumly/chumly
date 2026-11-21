@@ -343,9 +343,11 @@ notes say whether the client, the server or both need updating.
   feature that needs the server and the server lacks it; the tooltip lists what is missing.
   Nobody is warned just because a version number is lower.
 - **New releases.** The client asks GitHub for the latest release at launch and once a day
-  and shows "Chumly X is available" with What's new and Download (the file for your system;
-  replace the old `chumly.exe` with it). "Skip this version" silences that version until the
-  next one. Settings → General → Updates turns the automatic check off; "Check now" still
+  and shows "Chumly X is available" with What's new and **Update and restart**: it downloads
+  the file for your system, checks its minisign signature against the key built into the
+  client, replaces itself and restarts (in a call, it asks first). If the folder of
+  `chumly.exe` is not writable, download the file manually and replace the exe. "Skip this
+  version" silences that version until the next one. Settings → General → Updates turns the automatic check off; "Check now" still
   works. The server writes a newer release to its log at startup (`check_updates` in
   `server.toml`). Either way GitHub sees only the IP address and the app version.
 - **Server users** in the admin panel shows each online user's client version, and the

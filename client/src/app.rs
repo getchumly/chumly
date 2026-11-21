@@ -150,6 +150,11 @@ impl App {
     pub fn new(cc: &eframe::CreationContext<'_>, cfg_path: PathBuf) -> Self {
         let mut cfg = ClientConfig::load(&cfg_path);
         cfg.sort_favorites_first();
+        // A newer version than the one that last ran: it was just updated.
+        let just_updated =
+            cfg.last_version.as_deref().is_some_and(|last| shared::release::is_newer(shared::VERSION, last));
+        let version_changed = cfg.last_version.as_deref() != Some(shared::VERSION);
+        cfg.last_version = Some(shared::VERSION.to_string());
         crate::theme::install(&cc.egui_ctx, egui_theme(cfg.theme));
         let identity_path = Identity::path_for(&cfg_path);
         let crash = crash_ui::CrashBanner::load(&cfg_path, cfg.crash_dismissed.as_deref());
@@ -189,7 +194,7 @@ impl App {
         Self {
             cfg,
             cfg_path,
-            cfg_dirty: false,
+            cfg_dirty: version_changed,
             last_save: Instant::now(),
             ctx: cc.egui_ctx.clone(),
             net,
@@ -212,7 +217,11 @@ impl App {
             admin_panel: None,
             ptt,
             hotkeys,
-            updates: Default::default(),
+            updates: {
+                let mut u = crate::updates::Updates::default();
+                u.just_updated = just_updated;
+                u
+            },
             identity,
             identity_path,
             crash,
@@ -435,6 +444,7 @@ impl eframe::App for App {
         self.draw_editor(ctx);
         self.draw_dialogs(ctx);
         self.draw_whats_new(ctx);
+        self.draw_restart_confirm(ctx);
         self.draw_admin_panel(ctx);
         if !self.cfg.system_frame {
             window_frame::edges(ctx);

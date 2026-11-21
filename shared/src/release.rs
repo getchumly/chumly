@@ -76,20 +76,20 @@ impl Release {
     }
 }
 
-/// Asks GitHub for the latest release (one HTTPS request, 10 s at most).
-/// The error is for the log: the user is shown only "couldn't check".
-pub fn fetch_latest() -> anyhow::Result<Release> {
+/// HTTPS with the system's certificate store, our User-Agent.
+fn agent(config: ureq::config::ConfigBuilder<ureq::typestate::AgentScope>) -> ureq::Agent {
     let tls = TlsConfig::builder()
         .provider(TlsProvider::Rustls)
         .root_certs(RootCerts::PlatformVerifier)
         .unversioned_rustls_crypto_provider(Arc::new(rustls::crypto::ring::default_provider()))
         .build();
-    let agent: ureq::Agent = ureq::Agent::config_builder()
-        .tls_config(tls)
-        .timeout_global(Some(Duration::from_secs(10)))
-        .user_agent(user_agent())
-        .build()
-        .into();
+    config.tls_config(tls).user_agent(user_agent()).build().into()
+}
+
+/// Asks GitHub for the latest release (one HTTPS request, 10 s at most).
+/// The error is for the log: the user is shown only "couldn't check".
+pub fn fetch_latest() -> anyhow::Result<Release> {
+    let agent = agent(ureq::Agent::config_builder().timeout_global(Some(Duration::from_secs(10))));
     let body = agent
         .get(&latest_release_api())
         .header("Accept", "application/vnd.github+json")
@@ -97,6 +97,62 @@ pub fn fetch_latest() -> anyhow::Result<Release> {
         .body_mut()
         .read_to_string()?;
     Release::parse(&body).ok_or_else(|| anyhow::anyhow!("unreadable release answer"))
+}
+
+/// Why a download stopped.
+#[derive(Debug)]
+pub enum DownloadError {
+    /// `progress` asked to stop.
+    Cancelled,
+    /// Network, HTTP or write error, or the file is larger than allowed.
+    Failed(anyhow::Error),
+}
+
+impl<E: Into<anyhow::Error>> From<E> for DownloadError {
+    fn from(e: E) -> Self {
+        Self::Failed(e.into())
+    }
+}
+
+/// Downloads `url` (following redirects) into `out`, at most `max` bytes.
+/// `progress(done, total)` is called before every chunk; returning `false`
+/// stops the download. Blocking. Returns the number of bytes written.
+pub fn download(
+    url: &str,
+    max: u64,
+    out: &mut dyn std::io::Write,
+    mut progress: impl FnMut(u64, Option<u64>) -> bool,
+) -> Result<u64, DownloadError> {
+    use std::io::Read;
+    // No overall limit: a slow connection may need minutes for the client.
+    // A server that stops answering is caught by the receive timeouts.
+    let agent = agent(
+        ureq::Agent::config_builder()
+            .timeout_connect(Some(Duration::from_secs(15)))
+            .timeout_recv_response(Some(Duration::from_secs(30)))
+            .timeout_recv_body(Some(Duration::from_secs(15 * 60))),
+    );
+    let mut resp = agent.get(url).call()?;
+    let total = resp.body().content_length();
+    if total.is_some_and(|t| t > max) {
+        return Err(anyhow::anyhow!("file too large: {total:?} bytes").into());
+    }
+    let mut reader = resp.body_mut().with_config().limit(max).reader();
+    let mut buf = vec![0u8; 64 * 1024];
+    let mut done = 0u64;
+    loop {
+        if !progress(done, total) {
+            return Err(DownloadError::Cancelled);
+        }
+        let n = reader.read(&mut buf)?;
+        if n == 0 {
+            break;
+        }
+        out.write_all(&buf[..n])?;
+        done += n as u64;
+    }
+    progress(done, total);
+    Ok(done)
 }
 
 /// "1.2.3" (optionally "1.2.3-beta" or with a "v") as numbers plus whether
