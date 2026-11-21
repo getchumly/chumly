@@ -355,6 +355,12 @@ strings! {
     share_ended => "Демонстрация завершена", "Screen sharing ended";
     share_failed => "Не удалось начать демонстрацию: {err}", "Could not start screen sharing: {err}";
     sharing_now => "Вы показываете экран", "You are sharing your screen";
+    preview_title => "Ваш экран", "Your screen";
+    preview_open => "Открыть предпросмотр", "Open preview";
+    preview_hide => "Скрыть предпросмотр", "Hide preview";
+    preview_show => "Показать предпросмотр", "Show preview";
+    preview_note => "Предпросмотр: без звука, видите только вы", "Preview: no sound, only you see this";
+    preview_minimized => "Окно свёрнуто: зрители видят застывший кадр", "The window is minimized: viewers see a frozen picture";
     live => "В ЭФИРЕ", "LIVE";
     live_tip => "Показывает экран. Нажмите, чтобы смотреть", "Sharing screen. Click to watch";
     live_viewers_title => "Смотрят трансляцию {name} ({n})", "Watching {name} ({n})";

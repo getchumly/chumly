@@ -20,8 +20,8 @@ then copy out/*.ttf to client/assets/fonts/ and take codepoints for new icons fr
 out/icons.txt into client/src/icons.rs.
 
 Icons in the current build (add a name here and to the run):
-  REG=x,star,gear-six,check,microphone-slash,caret-down,caret-up,trash,plus,microphone,keyboard,key,arrows-clockwise,warning-circle,sliders-horizontal,pencil-simple,speaker-high,prohibit,warning,speaker-simple-slash,sign-out,screencast,monitor-play,corners-out,chat-circle,app-window,monitor,users-three,user-minus,user-plus,sun,sign-in,plugs,moon,lock-key,info,headphones,hash,eye,eye-slash,cpu,arrow-counter-clockwise,shield-star,copy,at,paper-plane-right,circle-notch,magnifying-glass,caret-right,list,shield,circle-dashed,identification-badge,minus,arrow-square-out,cloud-slash,check-circle,infinity,calendar-blank,hourglass-medium,clock,terminal-window,user,bug,folder-open
-  FILL=star,shield-warning,megaphone,warning-circle,stop,paper-plane-right,crown-simple,check-circle,x-circle,circle,shield-star,wrench,hammer,heart,music-note,game-controller,microphone,lightning,rocket-launch,lock-simple,arrow-circle-down
+  REG=x,star,gear-six,check,microphone-slash,caret-down,caret-up,trash,plus,microphone,keyboard,key,arrows-clockwise,warning-circle,sliders-horizontal,pencil-simple,speaker-high,prohibit,warning,speaker-simple-slash,sign-out,screencast,monitor-play,corners-out,chat-circle,app-window,monitor,users-three,user-minus,user-plus,sun,sign-in,plugs,moon,lock-key,info,headphones,hash,eye,eye-slash,cpu,arrow-counter-clockwise,shield-star,copy,at,paper-plane-right,circle-notch,magnifying-glass,caret-right,list,shield,circle-dashed,identification-badge,minus,arrow-square-out,cloud-slash,check-circle,infinity,calendar-blank,hourglass-medium,clock,terminal-window,user,bug,folder-open,picture-in-picture,arrows-out-simple
+  FILL=star,shield-warning,megaphone,warning-circle,stop,paper-plane-right,crown-simple,check-circle,x-circle,circle,shield-star,wrench,hammer,heart,music-note,game-controller,microphone,lightning,rocket-launch,lock-simple,arrow-circle-down,pause-circle
 """
 import re, sys, os
 from fontTools.ttLib import TTFont

@@ -164,11 +164,13 @@ pub struct HotkeyConfig {
 pub struct ShareConfig {
     pub quality: Quality,
     pub audio: bool,
+    /// The thumbnail of our own share in the "me" block.
+    pub preview: bool,
 }
 
 impl Default for ShareConfig {
     fn default() -> Self {
-        Self { quality: Quality::P1080F30, audio: true }
+        Self { quality: Quality::P1080F30, audio: true, preview: true }
     }
 }
 

@@ -17,6 +17,44 @@ const SPEAK_FADE_OUT: f32 = 0.15;
 
 /// Font size of the buttons in the "me" block.
 const ME_BUTTON_FONT: f32 = 12.5;
+/// An icon-only button in the "me" block (Disconnect in a narrow panel).
+const ME_ICON_BUTTON: f32 = 32.0;
+/// The thumbnail's background around the picture and before the first frame.
+const THUMB_BG: Color32 = Color32::from_rgb(0x0B, 0x0D, 0x10);
+/// Chips over the picture (hover controls, stats): dark and flat, so they
+/// read on any picture.
+const THUMB_CHIP: Color32 = Color32::from_rgba_unmultiplied_const(0x0B, 0x0D, 0x10, 224);
+
+/// The small "Show preview" button in the sharing status row (section 42d):
+/// quieter than Stop sharing. Give it a tooltip.
+fn show_preview_button(ui: &mut egui::Ui) -> egui::Response {
+    let p = pal(ui);
+    let (rect, resp) = ui.allocate_exact_size(vec2(24.0, 22.0), Sense::click());
+    let radius = CornerRadius::same(5);
+    if resp.hovered() {
+        ui.painter().rect_filled(rect, radius, p.hover);
+    }
+    ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, p.border), egui::StrokeKind::Inside);
+    let g = galley(ui, icons::PICTURE_IN_PICTURE, font(13.0, FontFamily::Proportional), p.t2);
+    ui.painter().galley(rect.center() - g.size() / 2.0, g, Color32::PLACEHOLDER);
+    resp
+}
+
+/// "The window is minimized: viewers see a frozen picture" as a strip along
+/// the thumbnail's bottom edge (section 44): calm orange, wraps if needed.
+fn thumbnail_warning(ui: &egui::Ui, rect: Rect, text: &str) {
+    let (pad_x, pad_y, gap) = (8.0, 6.0, 6.0);
+    let icon = galley(ui, icons::FILL_PAUSE_CIRCLE, font(14.0, theme::icons_fill()), WARN_ICON);
+    let wrap = (rect.width() - pad_x * 2.0 - icon.size().x - gap).max(40.0);
+    let g = ui.painter().layout(text.to_owned(), font(11.5, FontFamily::Proportional), WARN_TEXT, wrap);
+    let strip = Rect::from_min_max(pos2(rect.left(), rect.bottom() - g.size().y - pad_y * 2.0), rect.max);
+    let radius = CornerRadius { nw: 0, ne: 0, sw: theme::R_SM, se: theme::R_SM };
+    ui.painter().rect_filled(strip, radius, WARN_BG);
+    ui.painter().hline(strip.x_range(), strip.top() + 0.5, Stroke::new(1.0, WARN_BORDER));
+    let x = strip.left() + pad_x;
+    ui.painter().galley(pos2(x, strip.top() + pad_y), icon.clone(), Color32::PLACEHOLDER);
+    ui.painter().galley(pos2(x + icon.size().x + gap, strip.top() + pad_y), g, Color32::PLACEHOLDER);
+}
 
 impl App {
     pub(super) fn channel_panel(&mut self, root: &mut egui::Ui, actions: &mut Vec<Action>) {
@@ -43,6 +81,17 @@ impl App {
 
     fn me_block(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
         ui.spacing_mut().item_spacing = vec2(6.0, 9.0);
+        if self.screen.sharer.is_some() {
+            // Sections 42 and 44: the share on top, then the usual block.
+            self.sharing_status(ui, actions);
+            if self.cfg.share.preview {
+                self.preview_thumbnail(ui, actions);
+            } else {
+                self.sharing_stats_line(ui);
+            }
+            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 1.0), Sense::hover());
+            ui.painter().hline(rect.x_range(), rect.center().y, Stroke::new(1.0, pal(ui).border));
+        }
         self.me_line(ui);
         let half = (ui.available_width() - 6.0) / 2.0;
         ui.horizontal(|ui| {
@@ -53,9 +102,6 @@ impl App {
             ui.spacing_mut().item_spacing.x = 6.0;
             self.share_and_disconnect(ui, half, actions);
         });
-        if self.screen.sharer.is_some() {
-            self.sharing_status(ui, actions);
-        }
     }
 
     /// Speaking dot, nickname, "transmitting", and the voice mode on the right.
@@ -103,10 +149,22 @@ impl App {
     fn share_and_disconnect(&self, ui: &mut egui::Ui, width: f32, actions: &mut Vec<Action>) {
         let t = self.t();
         if self.screen.sharer.is_some() {
+            // In a narrow panel "Stop sharing" does not fit half the row:
+            // it takes the row and Disconnect becomes an icon (section 42e).
+            let narrow = theme::button_width(ui, t.stop_share, Some(icons::FILL_STOP)) > width;
+            let stop_w = if narrow { width * 2.0 - ME_ICON_BUTTON } else { width };
             let stop =
-                Button::danger(t.stop_share).with_fill_icon(icons::FILL_STOP).width(width).font_size(ME_BUTTON_FONT);
+                Button::danger(t.stop_share).with_fill_icon(icons::FILL_STOP).width(stop_w).font_size(ME_BUTTON_FONT);
             if ui.add(stop).clicked() {
                 actions.push(Action::StopShare);
+            }
+            if narrow {
+                let disconnect =
+                    Button::new(Kind::SecondaryDanger, "").with_icon(icons::SIGN_OUT).width(ME_ICON_BUTTON);
+                if ui.add(disconnect).on_hover_text(t.disconnect).clicked() {
+                    actions.push(Action::Disconnect);
+                }
+                return;
             }
         } else {
             let share =
@@ -125,56 +183,133 @@ impl App {
         }
     }
 
-    /// "• You are sharing" (a drawn red dot) with the viewer count on the right; the stats
-    /// always on their own line, so nothing wraps.
+    /// "• You are sharing your screen" (a drawn red dot) with the viewer count
+    /// on the right and, while the thumbnail is hidden, a button to show it.
     fn sharing_status(&mut self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
-        let (Some(s), Some(sh)) = (&self.session, &self.screen.sharer) else { return };
+        let Some(s) = &self.session else { return };
         let t = self.t();
         let p = pal(ui);
-        let stats = fill(
-            t.stream_stats,
-            &[
-                ("fps", &format!("{:.0}", self.screen.fps.fps)),
-                ("lost", &sh.counters().lost.load(Ordering::Relaxed).to_string()),
-            ],
-        );
         let viewer_count = s.viewers_of(s.my_id).len();
         let flash_at = s.viewer_flash.filter(|at| at.elapsed() < viewers::FLASH);
         if let Some(at) = flash_at {
             ui.ctx().request_repaint_after(viewers::FLASH.saturating_sub(at.elapsed()));
         }
-        ui.scope(|ui| {
-            ui.spacing_mut().item_spacing.y = 3.0;
-            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
-            let layout = egui::Layout::right_to_left(egui::Align::Center);
-            let mut right = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
-            let pill = viewers::eye_pill(&mut right, viewer_count, flash_at.is_some(), 22.0);
-            // The dot is drawn, not a "●" in the text: the bundled fonts are
-            // subsets without it, and it showed as a box.
-            dot(ui, pos2(rect.left() + 3.5, rect.center().y), 3.5, p.danger);
-            let text_x = rect.left() + 12.0;
-            let mut job = egui::text::LayoutJob::simple_singleline(
-                t.sharing_now.to_owned(),
-                font(12.0, theme::medium()),
-                p.danger,
-            );
-            job.wrap = egui::text::TextWrapping::truncate_at_width((pill.rect.left() - text_x - 8.0).max(20.0));
-            put(ui, rect, text_x, ui.painter().layout_job(job));
-            viewers::popover(
-                ui,
-                t,
-                s,
-                &self.cfg,
-                s.my_id,
-                true,
-                &mut self.screen.viewers_popover,
-                &pill,
-                true,
-                actions,
-            );
-            let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
-            put(ui, rect, rect.left(), galley(ui, &stats, font(11.0, FontFamily::Monospace), p.t3));
-        });
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 22.0), Sense::hover());
+        let layout = egui::Layout::right_to_left(egui::Align::Center);
+        let mut right = ui.new_child(egui::UiBuilder::new().max_rect(rect).layout(layout));
+        right.spacing_mut().item_spacing.x = 6.0;
+        let pill = viewers::eye_pill(&mut right, viewer_count, flash_at.is_some(), 22.0);
+        let mut text_right = pill.rect.left();
+        if !self.cfg.share.preview {
+            let show = show_preview_button(&mut right).on_hover_text(t.preview_show);
+            if show.clicked() {
+                actions.push(Action::SetPreviewShown(true));
+            }
+            text_right = show.rect.left();
+        }
+        // The dot is drawn, not a "●" in the text: the bundled fonts are
+        // subsets without it, and it showed as a box.
+        dot(ui, pos2(rect.left() + 3.5, rect.center().y), 3.5, p.danger);
+        let text_x = rect.left() + 12.0;
+        let mut job =
+            egui::text::LayoutJob::simple_singleline(t.sharing_now.to_owned(), font(12.0, theme::medium()), p.danger);
+        job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_x - 8.0).max(20.0));
+        put(ui, rect, text_x, ui.painter().layout_job(job));
+        viewers::popover(ui, t, s, &self.cfg, s.my_id, true, &mut self.screen.viewers_popover, &pill, true, actions);
+    }
+
+    /// "30 fps · frames lost: 0" for the share. A line of its own while the
+    /// thumbnail is hidden; on the thumbnail otherwise.
+    fn share_stats(&self) -> String {
+        let lost = self.screen.sharer.as_ref().map_or(0, |sh| sh.counters().lost.load(Ordering::Relaxed));
+        stream_stats(self.t(), self.screen.fps.fps, lost)
+    }
+
+    fn sharing_stats_line(&self, ui: &mut egui::Ui) {
+        let p = pal(ui);
+        // Closer to the status line than the usual spacing.
+        ui.add_space(-4.0);
+        let (rect, _) = ui.allocate_exact_size(vec2(ui.available_width(), 14.0), Sense::hover());
+        put(ui, rect, rect.left(), galley(ui, &self.share_stats(), font(11.0, FontFamily::Monospace), p.t3));
+    }
+
+    /// A live 16:9 thumbnail of our own share (sections 42 and 44). A click
+    /// opens it large; on hover, Open preview and Hide preview.
+    fn preview_thumbnail(&self, ui: &mut egui::Ui, actions: &mut Vec<Action>) {
+        let t = self.t();
+        let p = pal(ui);
+        let width = ui.available_width();
+        let (rect, resp) = ui.allocate_exact_size(vec2(width, (width * 9.0 / 16.0).round()), Sense::click());
+        let radius = CornerRadius::same(theme::R_SM);
+        let painter = ui.painter();
+        let minimized = self.screen.sharer.as_ref().is_some_and(|sh| sh.source_minimized());
+        painter.rect_filled(rect, radius, THUMB_BG);
+        match &self.screen.preview_texture {
+            Some(tex) => {
+                let size = tex.size_vec2();
+                let fitted =
+                    Rect::from_center_size(rect.center(), size * (rect.width() / size.x).min(rect.height() / size.y));
+                let tint = if minimized { Color32::WHITE.gamma_multiply(FROZEN_DIM) } else { Color32::WHITE };
+                let uv = Rect::from_min_max(pos2(0.0, 0.0), pos2(1.0, 1.0));
+                painter.add(egui::epaint::RectShape::filled(fitted, radius, tint).with_texture(tex.id(), uv));
+            }
+            None => {
+                let spinner = Rect::from_center_size(rect.center() - vec2(0.0, 12.0), vec2(16.0, 16.0));
+                egui::Spinner::new().size(16.0).color(p.accent).paint_at(ui, spinner);
+                let g = galley(ui, t.waiting_video, font(12.0, FontFamily::Proportional), theme::DARK.t2);
+                painter.galley(
+                    pos2(rect.center().x - g.size().x / 2.0, rect.center().y + 4.0),
+                    g,
+                    Color32::PLACEHOLDER,
+                );
+            }
+        }
+
+        if minimized {
+            thumbnail_warning(ui, rect, t.preview_minimized);
+        } else if self.screen.preview_texture.is_some() {
+            let g =
+                galley(ui, &self.share_stats(), font(10.5, FontFamily::Monospace), Color32::from_rgb(0xC9, 0xCF, 0xD8));
+            let chip =
+                Rect::from_min_size(pos2(rect.left() + 6.0, rect.bottom() - 6.0 - 18.0), vec2(g.size().x + 12.0, 18.0));
+            ui.painter().rect_filled(chip, CornerRadius::same(theme::R_XS), THUMB_CHIP);
+            put(ui, chip, chip.left() + 6.0, g);
+        }
+
+        // Hover: an accent ring and two chips in the top-right corner.
+        let hovered = ui.rect_contains_pointer(rect);
+        let ring = if hovered { p.accent } else { p.border };
+        ui.painter().rect_stroke(rect, radius, Stroke::new(1.0, ring), egui::StrokeKind::Outside);
+        let mut on_chip = false;
+        if hovered {
+            let mut x = rect.right() - 6.0 - 26.0;
+            for (icon, tip, action) in [
+                (icons::EYE_SLASH, t.preview_hide, Action::SetPreviewShown(false)),
+                (icons::ARROWS_OUT_SIMPLE, t.preview_open, Action::OpenPreview),
+            ] {
+                let chip = Rect::from_min_size(pos2(x, rect.top() + 6.0), vec2(26.0, 26.0));
+                let r = ui.interact(chip, egui::Id::unique(("preview-chip", icon)), Sense::click());
+                ui.painter().rect_filled(chip, CornerRadius::same(5), THUMB_CHIP);
+                let border = if r.hovered() { Color32::from_white_alpha(70) } else { Color32::from_white_alpha(40) };
+                ui.painter().rect_stroke(
+                    chip,
+                    CornerRadius::same(5),
+                    Stroke::new(1.0, border),
+                    egui::StrokeKind::Inside,
+                );
+                let g = galley(ui, icon, font(14.0, FontFamily::Proportional), Color32::WHITE);
+                ui.painter().galley(chip.center() - g.size() / 2.0, g, Color32::PLACEHOLDER);
+                on_chip |= r.hovered();
+                if r.on_hover_text(tip).clicked() {
+                    actions.push(action);
+                }
+                x -= 26.0 + 4.0;
+            }
+            ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
+        }
+        if resp.clicked() && !on_chip {
+            actions.push(Action::OpenPreview);
+        }
     }
 
     /// "CHANNELS" with "+", then every channel with its users.

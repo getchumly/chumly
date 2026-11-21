@@ -9,7 +9,8 @@ A small self-hosted voice chat: a desktop client and a lightweight server, writt
 - Voice over QUIC datagrams, Opus codec, noise suppression (RNNoise), jitter buffer with FEC
 - Push-to-talk or voice activation, global hotkeys for mute/deafen
 - Channels with user limits, text chat, private messages
-- Screen sharing with audio (H.264, Windows only for now); everyone sees who is watching
+- Screen sharing with audio (H.264, Windows only for now) and a live preview of your own
+  stream; everyone sees who is watching
 - Event sounds in groups that can be silenced one by one, with their own volume
 - Server roles bound to user keys (owner, admin, moderator by default; your own roles with chosen rights), registered nicknames; kick, ban and channel
   management from the client or the server console

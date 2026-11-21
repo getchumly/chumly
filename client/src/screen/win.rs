@@ -27,7 +27,10 @@ use windows_capture::settings::{
 use windows_capture::window::Window;
 
 use super::audio::{AudioTarget, StreamAudio};
-use super::{Counters, Quality, ScreenShared, Source, SourceId, Timing, scale_bgra, target_size};
+use super::{
+    Counters, Preview, PreviewMode, Quality, ScreenShared, Source, SourceId, THUMBNAIL_INTERVAL, Timing, preview_image,
+    scale_bgra, target_size,
+};
 use crate::net::NetCommand;
 
 /// Keyframes no more often than this, however many viewers ask.
@@ -177,6 +180,8 @@ pub struct Sharer {
     ended: Arc<AtomicBool>,
     stop: Arc<AtomicBool>,
     counters: Arc<Counters>,
+    /// The shared window; `None` for a monitor.
+    hwnd: Option<isize>,
     // Declared last so it stops after the video.
     _audio: Option<StreamAudio>,
     audio_error: Option<String>,
@@ -185,11 +190,13 @@ pub struct Sharer {
 impl Sharer {
     /// `with_audio`: also capture audio. If audio fails to start, video
     /// still runs and the reason is available via [`Sharer::audio_error`].
+    /// Captured frames also go to `preview` while the UI asks for them.
     pub fn start(
         source: SourceId,
         quality: Quality,
         with_audio: bool,
         out: tokio::sync::mpsc::Sender<(MediaKind, Vec<u8>)>,
+        preview: Arc<Preview>,
         ctx: egui::Context,
     ) -> Result<Self, String> {
         let (tx, rx) = std::sync::mpsc::sync_channel(1);
@@ -201,6 +208,8 @@ impl Sharer {
 
         let audio_out = out.clone();
         let enc = EncoderThread {
+            preview,
+            ctx: ctx.clone(),
             counters: counters.clone(),
             rx,
             pending: pending.clone(),
@@ -225,6 +234,10 @@ impl Sharer {
             counters: counters.clone(),
         };
         let mut audio_target = AudioTarget::AllExcept(std::process::id());
+        let hwnd = match source {
+            SourceId::Window(h) => Some(h),
+            SourceId::Monitor(_) => None,
+        };
         let started = match source {
             SourceId::Monitor(index) => {
                 let m = Monitor::from_index(index).map_err(|e| e.to_string())?;
@@ -258,7 +271,14 @@ impl Sharer {
         } else {
             (None, None)
         };
-        Ok(Self { control: Some(control), keyframe, ended, stop, counters, _audio: audio, audio_error })
+        Ok(Self { control: Some(control), keyframe, ended, stop, counters, hwnd, _audio: audio, audio_error })
+    }
+
+    /// The shared window is minimized: Windows sends no new frames, viewers
+    /// see the last one. Always `false` for a monitor.
+    pub fn source_minimized(&self) -> bool {
+        // SAFETY: IsIconic only reads the window state; a stale handle gives 0.
+        self.hwnd.is_some_and(|h| unsafe { windows_sys::Win32::UI::WindowsAndMessaging::IsIconic(h as _) } != 0)
     }
 
     pub fn request_keyframe(&self) {
@@ -293,7 +313,17 @@ impl Drop for Sharer {
     }
 }
 
+/// What the encoder thread last gave the preview.
+struct PreviewState {
+    mode: PreviewMode,
+    at: Option<Instant>,
+    /// A frame arrived that the preview has not shown yet.
+    stale: bool,
+}
+
 struct EncoderThread {
+    preview: Arc<Preview>,
+    ctx: egui::Context,
     rx: Receiver<Captured>,
     pending: Arc<AtomicBool>,
     keyframe: Arc<AtomicBool>,
@@ -340,6 +370,7 @@ impl EncoderThread {
         let mut last_keyframe: Option<Instant> = None;
         let mut frame_id: u32 = 0;
         let mut bytes = Vec::new();
+        let mut preview = PreviewState { mode: PreviewMode::Off, at: None, stale: false };
 
         while !self.stop.load(Ordering::Relaxed) {
             let fresh = match self.rx.recv_timeout(Duration::from_millis(100)) {
@@ -354,8 +385,12 @@ impl EncoderThread {
                 && last_keyframe.is_none_or(|t| t.elapsed() >= MIN_KEYFRAME_INTERVAL);
             if let Some(c) = fresh {
                 last = Some(c);
+                preview.stale = true;
             } else if !want_key {
                 // The screen did not change and nobody needs a keyframe.
+                // The preview may still want the last frame: it was just
+                // opened, or the thumbnail skipped the newest frame.
+                self.update_preview(last.as_ref(), &mut preview);
                 continue;
             }
             // A static screen produces no frames; re-encode the last one
@@ -391,8 +426,30 @@ impl EncoderThread {
             self.counters.timing.bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
             self.send_frame(frame_id, keyframe, &bytes);
             frame_id = frame_id.wrapping_add(1);
+            // After sending, so the preview does not delay the stream.
+            self.update_preview(Some(frame), &mut preview);
         }
         Ok(())
+    }
+
+    /// Hands `frame` to the UI if the preview wants it: right after the mode
+    /// changed, then every new frame (full) or a few times a second (thumbnail).
+    fn update_preview(&self, frame: Option<&Captured>, st: &mut PreviewState) {
+        let mode = self.preview.mode();
+        let changed = mode != st.mode;
+        st.mode = mode;
+        if mode == PreviewMode::Off {
+            return;
+        }
+        let Some(frame) = frame else { return };
+        let due = mode == PreviewMode::Full || st.at.is_none_or(|t| t.elapsed() >= THUMBNAIL_INTERVAL);
+        if !changed && !(st.stale && due) {
+            return;
+        }
+        st.at = Some(Instant::now());
+        st.stale = false;
+        self.preview.put(preview_image(&frame.bgra, frame.width, frame.height, mode));
+        self.ctx.request_repaint();
     }
 
     fn send_frame(&self, frame_id: u32, keyframe: bool, data: &[u8]) {
@@ -621,7 +678,9 @@ mod tests {
             Quality::P720F30
         };
         let want: usize = std::env::var("CHUMLY_TEST_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(10);
-        let sharer = Sharer::start(SourceId::Monitor(1), quality, false, tx, egui::Context::default()).unwrap();
+        let sharer =
+            Sharer::start(SourceId::Monitor(1), quality, false, tx, Default::default(), egui::Context::default())
+                .unwrap();
         let mut asm = Assembler::default();
         let mut dec = Decoder::new().unwrap();
         let mut frames = 0;
@@ -658,7 +717,9 @@ mod tests {
         };
         let secs: u64 = std::env::var("CHUMLY_TEST_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
         let (tx, mut rx) = tokio::sync::mpsc::channel(8192);
-        let sharer = Sharer::start(SourceId::Monitor(1), quality, false, tx, egui::Context::default()).unwrap();
+        let sharer =
+            Sharer::start(SourceId::Monitor(1), quality, false, tx, Default::default(), egui::Context::default())
+                .unwrap();
         let mut asm = Assembler::default();
         let mut dec = Decoder::new().unwrap();
         let (mut decoded, mut dec_us) = (0u64, 0u64);
