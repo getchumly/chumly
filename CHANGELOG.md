@@ -11,6 +11,23 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+**Update:** client only (servers can stay).
+
+### Added
+- Client: preview of your own screen share. While sharing, a live thumbnail sits in the
+  bottom-left block; a click opens it large in a "Your screen" window with fullscreen,
+  the viewer list and **Stop sharing**. The preview is local: no extra traffic and no
+  sound. It can be hidden (and shown again) from the thumbnail; the choice is remembered.
+- Client: when the shared window is minimized, the preview warns that viewers see a
+  frozen picture.
+
+### Changed
+- Client: screen share bitrate doubled: 5 Mbit/s at 720p 30, 8 at 1080p 30, 12 at 1080p 60.
+  Fast motion in games no longer turns to mush as quickly. The sharer needs that much
+  upload speed; on a slow connection choose 720p.
+- Client: in a narrow channel panel, **Disconnect** becomes an icon while sharing, so
+  **Stop sharing** fits.
+
 ## [0.1.0] - 2026-11-20
 
 Initial release.

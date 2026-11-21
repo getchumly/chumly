@@ -45,6 +45,13 @@ pub(super) enum Action {
     Watch(UserId, String),
     StopWatch,
     SetFullscreen(bool),
+    /// Open the "Your screen" window (our own share, large).
+    OpenPreview,
+    /// Close it; sharing goes on.
+    ClosePreview,
+    SetPreviewFullscreen(bool),
+    /// Show or hide the thumbnail of our own share.
+    SetPreviewShown(bool),
 }
 
 impl App {
@@ -282,7 +289,8 @@ impl App {
                     self.cfg.share.audio = audio;
                     self.cfg_dirty = true;
                 }
-                match Sharer::start(source, quality, audio, self.screen.tx.clone(), self.ctx.clone()) {
+                let preview = self.screen.preview.clone();
+                match Sharer::start(source, quality, audio, self.screen.tx.clone(), preview, self.ctx.clone()) {
                     Ok(sharer) => {
                         if let Some(e) = sharer.audio_error() {
                             tracing::warn!("screen share audio: {e}");
@@ -358,6 +366,36 @@ impl App {
                     w.fullscreen = on.then(Instant::now);
                     self.ctx.send_viewport_cmd_to(viewer_viewport(), egui::ViewportCommand::Fullscreen(on));
                 }
+            }
+            Action::OpenPreview => {
+                if self.screen.sharer.is_none() {
+                    return;
+                }
+                if self.screen.own_window.is_some() {
+                    self.ctx.send_viewport_cmd_to(own_viewport(), egui::ViewportCommand::Focus);
+                    return;
+                }
+                let mut builder = egui::ViewportBuilder::default()
+                    .with_title(t.preview_title)
+                    .with_inner_size([960.0, 560.0])
+                    .with_min_inner_size([320.0, 200.0])
+                    .with_decorations(self.cfg.system_frame);
+                if let Some(icon) = &self.icon {
+                    builder = builder.with_icon(icon.clone());
+                }
+                self.screen.own_window = Some(OwnWindow { fullscreen: None, builder });
+            }
+            // The window closes by itself once it is no longer drawn.
+            Action::ClosePreview => self.screen.own_window = None,
+            Action::SetPreviewFullscreen(on) => {
+                if let Some(w) = &mut self.screen.own_window {
+                    w.fullscreen = on.then(Instant::now);
+                    self.ctx.send_viewport_cmd_to(own_viewport(), egui::ViewportCommand::Fullscreen(on));
+                }
+            }
+            Action::SetPreviewShown(on) => {
+                self.cfg.share.preview = on;
+                self.cfg_dirty = true;
             }
         }
     }

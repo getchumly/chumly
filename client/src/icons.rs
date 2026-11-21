@@ -11,6 +11,7 @@
 
 pub const APP_WINDOW: &str = "\u{E5DA}";
 pub const ARROWS_CLOCKWISE: &str = "\u{E094}";
+pub const ARROWS_OUT_SIMPLE: &str = "\u{E0A6}";
 pub const ARROW_COUNTER_CLOCKWISE: &str = "\u{E038}";
 pub const ARROW_SQUARE_OUT: &str = "\u{E5DE}";
 pub const AT: &str = "\u{E0AC}";
@@ -52,6 +53,7 @@ pub const MONITOR_PLAY: &str = "\u{E58C}";
 pub const MOON: &str = "\u{E330}";
 pub const PAPER_PLANE_RIGHT: &str = "\u{E396}";
 pub const PENCIL_SIMPLE: &str = "\u{E3B4}";
+pub const PICTURE_IN_PICTURE: &str = "\u{E64C}";
 pub const PLUGS: &str = "\u{EB56}";
 pub const PLUS: &str = "\u{E3D4}";
 pub const PROHIBIT: &str = "\u{E3DE}";
@@ -88,6 +90,7 @@ pub const FILL_MEGAPHONE: &str = "\u{E324}";
 pub const FILL_MICROPHONE: &str = "\u{E326}";
 pub const FILL_MUSIC_NOTE: &str = "\u{E33C}";
 pub const FILL_PAPER_PLANE_RIGHT: &str = "\u{E396}";
+pub const FILL_PAUSE_CIRCLE: &str = "\u{E3A0}";
 pub const FILL_ROCKET_LAUNCH: &str = "\u{E3FE}";
 pub const FILL_SHIELD_STAR: &str = "\u{EC34}";
 pub const FILL_SHIELD_WARNING: &str = "\u{E412}";

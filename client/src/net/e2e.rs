@@ -635,11 +635,15 @@ fn screen_share(a: &TestClient, alice: UserId, b: &TestClient, bob: UserId) {
     });
 }
 
-/// Load similar to a 1080p share: 20 KB frames and 200 KB keyframes,
-/// 30 frames per second. Counts how much reaches the viewer.
+/// Load similar to the heaviest share, 1080p 60 at 12 Mbit/s: 22 KB frames
+/// and a 300 KB keyframe every second, about 13 Mbit/s. Counts how much
+/// reaches the viewer.
 #[test]
 #[ignore = "requires a running server"]
 fn screen_stress() {
+    const FPS: u32 = 60;
+    const FRAME: usize = 22_000;
+    const KEYFRAME: usize = 300_000;
     use shared::media::{SCREEN_FRAGMENT_DATA, ScreenFragment};
     let rt = tokio::runtime::Builder::new_multi_thread().enable_all().build().unwrap();
     let a = client(&rt);
@@ -658,12 +662,12 @@ fn screen_stress() {
     b.send(ClientMsg::WatchStream { user_id: Some(alice) });
     std::thread::sleep(Duration::from_millis(300));
 
-    let frames = 150u32;
+    let frames = FPS * 5;
     let mut sent = 0usize;
     let mut sent_key = 0usize;
     for id in 0..frames {
-        let key = id % 30 == 0;
-        let data = vec![id as u8; if key { 200_000 } else { 20_000 }];
+        let key = id % FPS == 0;
+        let data = vec![id as u8; if key { KEYFRAME } else { FRAME }];
         let count = data.len().div_ceil(SCREEN_FRAGMENT_DATA);
         for (i, chunk) in data.chunks(SCREEN_FRAGMENT_DATA).enumerate() {
             let f = ScreenFragment { frame_id: id, index: i as u16, count: count as u16, keyframe: key, data: chunk };
@@ -673,7 +677,7 @@ fn screen_stress() {
         if key {
             sent_key += count;
         }
-        std::thread::sleep(Duration::from_millis(33));
+        std::thread::sleep(Duration::from_secs(1) / FPS);
     }
     std::thread::sleep(Duration::from_millis(500));
     let mut got = std::collections::HashMap::<u32, usize>::new();
@@ -684,18 +688,18 @@ fn screen_stress() {
     let received: usize = got.values().sum();
     let complete = (0..frames)
         .filter(|id| {
-            let need = if id % 30 == 0 { 200_000usize } else { 20_000 }.div_ceil(SCREEN_FRAGMENT_DATA);
+            let need = if id % FPS == 0 { KEYFRAME } else { FRAME }.div_ceil(SCREEN_FRAGMENT_DATA);
             got.get(id).copied() == Some(need)
         })
         .count();
     let complete_key = (0..frames)
-        .step_by(30)
-        .filter(|id| got.get(id).copied() == Some(200_000usize.div_ceil(SCREEN_FRAGMENT_DATA)))
+        .step_by(FPS as usize)
+        .filter(|id| got.get(id).copied() == Some(KEYFRAME.div_ceil(SCREEN_FRAGMENT_DATA)))
         .count();
     println!(
         "fragments sent {sent} (keyframe {sent_key}), received {received} ({:.1}%); complete frames {complete}/{frames}, keyframes {complete_key}/{}",
         received as f64 * 100.0 / sent as f64,
-        frames.div_ceil(30)
+        frames.div_ceil(FPS)
     );
 }
 

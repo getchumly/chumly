@@ -32,7 +32,7 @@ use crate::i18n::{Tr, fill, tr};
 use crate::identity::Identity;
 use crate::net::{self, ConnectParams, DisconnectReason, NetCommand, NetEvent, VoiceOut};
 use crate::ptt::PttWatcher;
-use crate::screen::{self, Quality, ScreenShared, Sharer, Source, SourceId, Viewer};
+use crate::screen::{self, Preview, PreviewMode, Quality, ScreenShared, Sharer, Source, SourceId, Viewer};
 use crate::theme::ToastKind;
 
 struct Toast {
@@ -298,6 +298,10 @@ impl App {
         }
         self.screen.announced = false;
         self.screen.dialog = None;
+        // The "Your screen" window closes once it is no longer drawn.
+        self.screen.own_window = None;
+        self.screen.preview.set_mode(PreviewMode::Off);
+        self.screen.preview_texture = None;
     }
 
     fn stop_watch(&mut self) {
@@ -418,12 +422,14 @@ impl eframe::App for App {
 
         let mut actions = Vec::new();
         self.update_video();
+        self.update_preview();
         if self.session.is_some() {
             self.draw_main(ui, &mut actions);
         } else {
             self.draw_server_list(ui, &mut actions);
         }
         self.draw_viewer(ctx, &mut actions);
+        self.draw_own_window(ctx, &mut actions);
         self.draw_share_dialog(ctx, &mut actions);
         self.draw_settings(ctx);
         self.draw_editor(ctx);
