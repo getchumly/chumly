@@ -11,6 +11,8 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-22
+
 **Update:** client only (servers can stay). Linux users: the client now needs PipeWire
 (`libpipewire-0.3`), which desktop systems normally have.
 
@@ -96,7 +98,8 @@ Initial release.
 - Portable mode, light and dark themes, English and Russian UI.
 - Releases are signed with minisign.
 
-[Unreleased]: ../../compare/v0.1.2...HEAD
+[Unreleased]: ../../compare/v0.2.0...HEAD
+[0.2.0]: ../../compare/v0.1.2...v0.2.0
 [0.1.2]: ../../compare/v0.1.1...v0.1.2
 [0.1.1]: ../../compare/v0.1.0...v0.1.1
 [0.1.0]: ../../releases/tag/v0.1.0
