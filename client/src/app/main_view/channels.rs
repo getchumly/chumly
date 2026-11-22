@@ -215,7 +215,7 @@ impl App {
             egui::text::LayoutJob::simple_singleline(t.sharing_now.to_owned(), font(12.0, theme::medium()), p.danger);
         job.wrap = egui::text::TextWrapping::truncate_at_width((text_right - text_x - 8.0).max(20.0));
         put(ui, rect, text_x, ui.painter().layout_job(job));
-        viewers::popover(ui, t, s, &self.cfg, s.my_id, true, &mut self.screen.viewers_popover, &pill, true, actions);
+        viewers::popover(ui, t, s, &self.cfg, &mut self.screen.viewers_popover, &pill, actions);
     }
 
     /// "30 fps · frames lost: 0" for the share. A line of its own while the
@@ -244,7 +244,8 @@ impl App {
         let painter = ui.painter();
         let minimized = self.screen.sharer.as_ref().is_some_and(|sh| sh.source_minimized());
         painter.rect_filled(rect, radius, THUMB_BG);
-        match &self.screen.preview_texture {
+        let frame = self.screen.preview_frame();
+        match &frame {
             Some(tex) => {
                 let size = tex.size_vec2();
                 let fitted =
@@ -267,7 +268,7 @@ impl App {
 
         if minimized {
             thumbnail_warning(ui, rect, t.preview_minimized);
-        } else if self.screen.preview_texture.is_some() {
+        } else if frame.is_some() {
             let g =
                 galley(ui, &self.share_stats(), font(10.5, FontFamily::Monospace), Color32::from_rgb(0xC9, 0xCF, 0xD8));
             let chip =

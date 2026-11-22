@@ -1,5 +1,6 @@
 //! Screen share audio on Windows: per-process audio capture
-//! (process loopback, Windows 10 2004 and later) and Opus encoding.
+//! (process loopback, Windows 10 2004 and later); the Opus packing is
+//! shared (`audio::Packer`).
 //!
 //! Window share: audio of that window's program and its child
 //! processes only. Screen share: all system audio except Chumly itself,
@@ -10,23 +11,10 @@ use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::thread::JoinHandle;
 
-use shared::media::{MediaKind, VOICE_FRAME_SAMPLES, VOICE_SAMPLE_RATE};
+use shared::media::{MediaKind, VOICE_SAMPLE_RATE};
 use wasapi::{AudioClient, Direction, SampleType, StreamMode, WaveFormat};
 
-/// What to capture.
-#[derive(Clone, Copy, Debug)]
-pub enum AudioTarget {
-    /// Audio of the process and all its children.
-    Only(u32),
-    /// All audio except the process and its children.
-    AllExcept(u32),
-}
-
-/// Screen share audio bitrate: music and games need more than voice.
-const BITRATE: i32 = 128_000;
-const CHANNELS: usize = 2;
-/// Samples quieter than this are treated as silence and not sent.
-const SILENCE: f32 = 1.0e-4;
+use super::{AudioTarget, CHANNELS, Packer};
 
 pub struct StreamAudio {
     stop: Arc<AtomicBool>,
@@ -79,25 +67,19 @@ fn capture_loop(
         AudioTarget::AllExcept(pid) => (pid, false),
     };
     let format = WaveFormat::new(32, 32, SampleType::Float, VOICE_SAMPLE_RATE as usize, CHANNELS, None);
-    let block_align = format.get_blockalign() as usize;
     let mut client = AudioClient::new_application_loopback_client(pid, include).map_err(|e| err(&e))?;
     let mode = StreamMode::EventsShared { autoconvert: true, buffer_duration_hns: 0 };
     client.initialize_client(&format, Direction::Capture, mode, None).map_err(|e| err(&e))?;
     let event = client.set_get_eventhandle().map_err(|e| err(&e))?;
     let capture = client.get_audiocaptureclient().map_err(|e| err(&e))?;
-
-    let mut encoder =
-        opus::Encoder::new(VOICE_SAMPLE_RATE, opus::Channels::Stereo, opus::Application::Audio).map_err(|e| err(&e))?;
-    encoder.set_bitrate(opus::Bitrate::Bits(BITRATE)).map_err(|e| err(&e))?;
+    let mut packer = Packer::new(out.clone())?;
 
     client.start_stream().map_err(|e| err(&e))?;
     let _ = ready.send(Ok(()));
 
-    let frame_bytes = VOICE_FRAME_SAMPLES * block_align;
+    // Bytes as they come from the device: little-endian f32, interleaved stereo.
     let mut queue: VecDeque<u8> = VecDeque::new();
-    let mut pcm = vec![0.0f32; VOICE_FRAME_SAMPLES * CHANNELS];
-    let mut packet = vec![0u8; 4000];
-    let mut raw = Vec::with_capacity(frame_bytes);
+    let mut raw = Vec::new();
     while !stop.load(Ordering::Relaxed) {
         // With nothing playing there may be no events: just keep waiting.
         if event.wait_for_event(200).is_err() {
@@ -112,20 +94,9 @@ fn capture_loop(
                 Err(e) => return Err(err(&e)),
             }
         }
-        while queue.len() >= frame_bytes {
-            raw.clear();
-            raw.extend(queue.drain(..frame_bytes));
-            for (s, bytes) in pcm.iter_mut().zip(raw.as_chunks::<4>().0) {
-                *s = f32::from_le_bytes(*bytes);
-            }
-            // Silence is not sent: viewers do not need the extra traffic.
-            if pcm.iter().all(|s| s.abs() < SILENCE) {
-                continue;
-            }
-            let len = encoder.encode_float(&pcm, &mut packet).map_err(|e| err(&e))?;
-            // If the network cannot keep up, drop this chunk rather than build up latency.
-            let _ = out.try_send((MediaKind::ScreenAudio, packet[..len].to_vec()));
-        }
+        raw.clear();
+        raw.extend(queue.drain(..queue.len() / 4 * 4));
+        packer.push(raw.as_chunks::<4>().0.iter().map(|b| f32::from_le_bytes(*b)))?;
     }
     let _ = client.stop_stream();
     Ok(())

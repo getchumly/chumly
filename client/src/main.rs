@@ -62,10 +62,13 @@ pub fn window_icon() -> Option<egui::IconData> {
 }
 
 fn main() -> eframe::Result<()> {
+    // On GNOME (Wayland) the window title bar library warns about an empty
+    // entry in the system button layout, and the clipboard library about a
+    // protocol GNOME lacks before it falls back to one that works: noise
+    // for every window.
+    let default = "info,wgpu=warn,eframe=warn,sctk_adwaita=error,arboard=error";
     tracing_subscriber::fmt()
-        .with_env_filter(
-            EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,wgpu=warn,eframe=warn")),
-        )
+        .with_env_filter(EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new(default)))
         .with_target(false)
         .init();
 

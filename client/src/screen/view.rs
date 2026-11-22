@@ -95,11 +95,13 @@ pub struct Viewer {
 }
 
 impl Viewer {
+    /// `window`: the viewport that shows the stream, woken on every new frame.
     pub fn start(
         user_id: shared::UserId,
         shared: Arc<ScreenShared>,
         net: tokio::sync::mpsc::UnboundedSender<NetCommand>,
         ctx: egui::Context,
+        window: egui::ViewportId,
     ) -> Result<Self, String> {
         let decoder = Decoder::new().map_err(|e| e.to_string())?;
         let (tx, rx) = std::sync::mpsc::channel();
@@ -109,7 +111,7 @@ impl Viewer {
         let out = Output { slot: frame.clone(), counters: counters.clone(), rgba: rgba.clone() };
         std::thread::Builder::new()
             .name("screen-decoder".into())
-            .spawn(move || decode_loop(user_id, decoder, rx, out, net, ctx))
+            .spawn(move || decode_loop(user_id, decoder, rx, out, net, ctx, window))
             .map_err(|e| e.to_string())?;
         shared.attach(user_id, tx);
         Ok(Self { shared, frame, counters, rgba })
@@ -118,6 +120,11 @@ impl Viewer {
     /// A new frame, if one arrived since the last call.
     pub fn take_frame(&self) -> Option<Frame> {
         self.frame.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    /// The share stopped or we were disconnected (see `ScreenShared::ended`).
+    pub fn ended(&self) -> bool {
+        self.shared.ended()
     }
 
     /// From now on the decoder thread converts frames to RGBA itself (with
@@ -155,6 +162,7 @@ fn decode_loop(
     out: Output,
     net: tokio::sync::mpsc::UnboundedSender<NetCommand>,
     ctx: egui::Context,
+    window: egui::ViewportId,
 ) {
     let Output { slot, counters, rgba: want_rgba } = out;
     let mut rgba = Vec::new();
@@ -224,7 +232,7 @@ fn decode_loop(
         counters.waiting_key.store(false, Ordering::Relaxed);
         counters.frames.fetch_add(1, Ordering::Relaxed);
         *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(image);
-        ctx.request_repaint();
+        ctx.request_repaint_of(window);
     }
 }
 

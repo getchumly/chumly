@@ -33,7 +33,7 @@ pub(super) async fn run_session(ctx: &mut Ctx, s: Session) -> SessionEnd {
 
     // The control stream and datagrams are read in separate tasks:
     // read_msg must not be cancelled mid-frame.
-    let mut reader = spawn_control_reader(recv, ctx.ev.clone());
+    let mut reader = spawn_control_reader(recv, ctx.ev.clone(), ctx.screen.clone());
     let media = spawn_media_reader(conn.clone(), ctx.mixer.clone(), ctx.screen.clone());
 
     let mut link_tick = tokio::time::interval(Duration::from_secs(1));
@@ -71,6 +71,7 @@ pub(super) async fn run_session(ctx: &mut Ctx, s: Session) -> SessionEnd {
     };
 
     ctx.shared.connected.store(false, Ordering::Relaxed);
+    ctx.screen.all_ended();
     reader.abort();
     media.abort();
     lock_mixer(&ctx.mixer).clear();
@@ -81,14 +82,24 @@ pub(super) async fn run_session(ctx: &mut Ctx, s: Session) -> SessionEnd {
 }
 
 /// Reads server messages until the stream ends or we are kicked.
-fn spawn_control_reader(mut recv: quinn::RecvStream, ev: Events) -> JoinHandle<SessionEnd> {
+fn spawn_control_reader(mut recv: quinn::RecvStream, ev: Events, screen: Arc<ScreenShared>) -> JoinHandle<SessionEnd> {
     tokio::spawn(async move {
         loop {
             match read_msg::<_, ServerMsg>(&mut recv).await {
                 Ok(Some(ServerMsg::Kicked { reason, banned, ban_secs })) => {
                     return SessionEnd::Done(DisconnectReason::Kicked { reason, banned, ban_secs });
                 }
-                Ok(Some(m)) => ev.emit(NetEvent::Message(m)),
+                Ok(Some(m)) => {
+                    // The stream window learns this here, not from the UI (see `ScreenShared::ended`).
+                    match &m {
+                        ServerMsg::UserUpdated(u) if !u.streams.contains(&MediaKind::Screen) => {
+                            screen.share_ended(u.id)
+                        }
+                        ServerMsg::UserLeft { user_id } => screen.share_ended(*user_id),
+                        _ => {}
+                    }
+                    ev.emit(NetEvent::Message(m));
+                }
                 Ok(None) => return SessionEnd::Lost("server closed the stream".into()),
                 Err(e) => return SessionEnd::Lost(format!("{e:#}")),
             }

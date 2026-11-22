@@ -167,7 +167,8 @@ impl EncoderThread {
         st.at = Some(Instant::now());
         st.stale = false;
         self.preview.put(preview_image(&frame.bgra, frame.width, frame.height, mode));
-        self.ctx.request_repaint();
+        self.ctx.request_repaint_of(egui::ViewportId::ROOT);
+        self.ctx.request_repaint_of(self.preview.window());
     }
 
     fn send_frame(&self, frame_id: u32, keyframe: bool, data: &[u8]) {

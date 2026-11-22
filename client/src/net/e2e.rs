@@ -553,9 +553,14 @@ fn screen_share(a: &TestClient, alice: UserId, b: &TestClient, bob: UserId) {
             .then_some(())
     });
 
-    let viewer =
-        crate::screen::Viewer::start(alice, b.screen.clone(), b.cmds.clone(), eframe::egui::Context::default())
-            .unwrap();
+    let viewer = crate::screen::Viewer::start(
+        alice,
+        b.screen.clone(),
+        b.cmds.clone(),
+        eframe::egui::Context::default(),
+        eframe::egui::ViewportId::ROOT,
+    )
+    .unwrap();
     b.send(ClientMsg::WatchStream { user_id: Some(alice) });
     a.wait("bob among alice's viewers", |e| {
         matches!(e, NetEvent::Message(ServerMsg::UserUpdated(u)) if u.id == bob && u.watching == Some(alice))
