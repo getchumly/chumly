@@ -9,13 +9,20 @@ A small self-hosted voice chat: a desktop client and a lightweight server, writt
 - Voice over QUIC datagrams, Opus codec, noise suppression (RNNoise), jitter buffer with FEC
 - Push-to-talk or voice activation, global hotkeys for mute/deafen
 - Channels with user limits, text chat, private messages
-- Screen sharing (H.264) on Windows and Linux (X11 and Wayland), with audio on Windows for
-  now, and a live preview of your own stream; everyone sees who is watching
+- Screen sharing (H.264) with audio on Windows and Linux (X11 and Wayland), and a live
+  preview of your own stream; everyone sees who is watching
 - Event sounds in groups that can be silenced one by one, with their own volume
 - Server roles bound to user keys (owner, admin, moderator by default; your own roles with chosen rights), registered nicknames; kick, ban and channel
   management from the client or the server console
 - Self-signed TLS with certificate pinning on first connect (like SSH)
 - UI in English and Russian
+
+> **Linux screen sharing is new.** It is tested on Ubuntu 26.04 (GNOME, Wayland) and
+> Linux Mint (X11); other desktops (KDE, Fedora and others) should work but are not tested
+> yet. Known so far: with GNOME, a fullscreen video may freeze for viewers while its
+> controls are hidden (moving the mouse brings it back). If something does not work on
+> your system, please [open an issue](../../issues) and mention your distribution and
+> desktop.
 
 <table>
   <tr>
