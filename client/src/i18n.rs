@@ -407,6 +407,7 @@ strings! {
     waiting_keyframe => "ждём ключевой кадр", "waiting for keyframe";
     share_audio => "Транслировать звук", "Share audio";
     share_audio_tip => "Окно: звук только этой программы. Экран: весь звук, кроме Chumly.", "Window: only that app's sound. Screen: all sound except Chumly.";
+    share_audio_tip_portal => "Весь звук, кроме Chumly: система не сообщает, какое окно выбрано.", "All sound except Chumly: the system does not say which window was picked.";
     share_audio_unavailable => "Звук трансляции пока есть только на Windows: на этой системе показывается только изображение.", "Stream audio is Windows only for now: on this system only the picture is shared.";
     share_audio_failed => "Звук демонстрации не запустился: {err}", "Stream audio failed to start: {err}";
     stream_volume => "Громкость демонстрации", "Stream volume";

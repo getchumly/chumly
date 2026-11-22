@@ -51,31 +51,87 @@ fn watched_for(t: &Tr, since: Option<Instant>) -> String {
     if min == 0 { t.viewer_now.into() } else { fill(t.viewer_minutes, &[("n", &min.to_string())]) }
 }
 
-/// Who watches `streamer`'s share: the popover for `pill` (see `HoverPopover`).
-/// `as_streamer`: the streamer's own list (watch time, user menu on a
-/// click, an empty state); otherwise a viewer's (themselves first).
-#[allow(clippy::too_many_arguments)]
+/// Who watches a share, copied out of the session: the stream windows draw
+/// on their own, without the session at hand.
+#[derive(Clone, Default)]
+pub(super) struct ViewerList {
+    pub(super) my_id: UserId,
+    /// Most recent first, as `Session::viewers_of` sorts them.
+    pub(super) viewers: Vec<UserInfo>,
+    pub(super) roles: shared::Roles,
+}
+
+impl ViewerList {
+    pub(super) fn of(s: &Session, streamer: UserId) -> Self {
+        let viewers = s.viewers_of(streamer).into_iter().cloned().collect();
+        Self { my_id: s.my_id, viewers, roles: s.roles.clone() }
+    }
+}
+
+/// Who watches our share, in the "me" block: the popover for `pill` (see
+/// `HoverPopover`), above it, with how long each has been watching; a click
+/// on a name opens the user menu.
 pub(super) fn popover(
     ui: &egui::Ui,
     t: &Tr,
     s: &Session,
     cfg: &ClientConfig,
-    streamer: UserId,
-    as_streamer: bool,
     pop: &mut HoverPopover,
     pill: &egui::Response,
-    above: bool,
     actions: &mut Vec<Action>,
 ) {
-    if !pop.update(ui, pill) {
-        return;
+    let viewers = s.viewers_of(s.my_id);
+    let shown = shell(ui, t, pop, pill, true, viewers.len(), |ui| {
+        for u in &viewers {
+            let me = u.id == s.my_id;
+            let right = if me { String::new() } else { watched_for(t, s.watch_since.get(&u.id).copied()) };
+            let resp = row(ui, t, &s.roles, u, &right, !me);
+            if !me {
+                let volume = cfg.user_volume(&u.nickname);
+                let perms = s.my_perms();
+                egui::Popup::menu(&resp).show(|ui| {
+                    super::user_menu::user_menu(ui, t, &s.roles, s.my_role(), perms, u, volume, actions);
+                });
+            }
+        }
+    });
+    // Minutes tick: keep the times fresh while it is open.
+    if shown {
+        ui.ctx().request_repaint_after(Duration::from_secs(10));
     }
-    let p = pal(ui);
-    let mut viewers = s.viewers_of(streamer);
-    if !as_streamer && let Some(i) = viewers.iter().position(|u| u.id == s.my_id) {
+}
+
+/// Who watches the share in a stream window: the popover for `pill`, below
+/// it, the viewer themselves first as "you".
+pub(super) fn window_popover(ui: &egui::Ui, t: &Tr, list: &ViewerList, pop: &mut HoverPopover, pill: &egui::Response) {
+    let mut viewers: Vec<&UserInfo> = list.viewers.iter().collect();
+    if let Some(i) = viewers.iter().position(|u| u.id == list.my_id) {
         let me = viewers.remove(i);
         viewers.insert(0, me);
     }
+    shell(ui, t, pop, pill, false, viewers.len(), |ui| {
+        for u in &viewers {
+            let right = if u.id == list.my_id { t.you } else { "" };
+            row(ui, t, &list.roles, u, right, false);
+        }
+    });
+}
+
+/// The popover itself: the "WATCHING · 3" header and `rows` in a scroll
+/// area, or the empty state; `above` or below `pill`. Returns whether it is open.
+fn shell(
+    ui: &egui::Ui,
+    t: &Tr,
+    pop: &mut HoverPopover,
+    pill: &egui::Response,
+    above: bool,
+    count: usize,
+    rows: impl FnOnce(&mut egui::Ui),
+) -> bool {
+    if !pop.update(ui, pill) {
+        return false;
+    }
+    let p = pal(ui);
     let (at, pivot) = if above {
         (pill.rect.right_top() - vec2(0.0, 6.0), Align2::RIGHT_BOTTOM)
     } else {
@@ -87,7 +143,7 @@ pub(super) fn popover(
         .corner_radius(CornerRadius::same(theme::R_MD))
         .inner_margin(Margin::same(6))
         .shadow(egui::Shadow { offset: [0, 10], blur: 28, spread: 0, color: Color32::from_black_alpha(90) });
-    let area = egui::Area::new(egui::Id::unique(("viewers-popover", streamer, as_streamer)))
+    let area = egui::Area::new(egui::Id::unique(("viewers-popover", above)))
         .order(egui::Order::Foreground)
         .pivot(pivot)
         .fixed_pos(at)
@@ -108,33 +164,16 @@ pub(super) fn popover(
                         p.t3,
                     ),
                 );
-                put(ui, head, x, galley(ui, &viewers.len().to_string(), font(11.0, FontFamily::Monospace), p.t3));
-                if viewers.is_empty() {
+                put(ui, head, x, galley(ui, &count.to_string(), font(11.0, FontFamily::Monospace), p.t3));
+                if count == 0 {
                     empty(ui, t);
                     return;
                 }
                 egui::ScrollArea::vertical().max_height(LIST_MAX_H).auto_shrink([false, true]).show(ui, |ui| {
                     ui.spacing_mut().item_spacing.y = 1.0;
-                    for u in &viewers {
-                        let me = u.id == s.my_id;
-                        let right = if as_streamer {
-                            watched_for(t, s.watch_since.get(&u.id).copied())
-                        } else if me {
-                            t.you.into()
-                        } else {
-                            String::new()
-                        };
-                        let resp = row(ui, t, s, u, &right, as_streamer && !me);
-                        if as_streamer && !me {
-                            let volume = cfg.user_volume(&u.nickname);
-                            let perms = s.my_perms();
-                            egui::Popup::menu(&resp).show(|ui| {
-                                super::user_menu::user_menu(ui, t, &s.roles, s.my_role(), perms, u, volume, actions);
-                            });
-                        }
-                    }
+                    rows(ui);
                 });
-                if as_streamer {
+                if above {
                     ui.add_space(4.0);
                     let (r, _) = ui.allocate_exact_size(vec2(POPOVER_W - 12.0, 26.0), Sense::hover());
                     ui.painter().hline(r.x_range(), r.top() + 0.5, Stroke::new(1.0, p.border));
@@ -148,15 +187,12 @@ pub(super) fn popover(
             });
         });
     pop.set_rect(area.response.rect);
-    // Minutes tick: keep the times fresh while it is open.
-    if as_streamer {
-        ui.ctx().request_repaint_after(Duration::from_secs(10));
-    }
+    true
 }
 
 /// One viewer: role icon, nickname in the role color, and on the right the
 /// watch time or "you".
-fn row(ui: &mut egui::Ui, t: &Tr, s: &Session, u: &UserInfo, right: &str, clickable: bool) -> egui::Response {
+fn row(ui: &mut egui::Ui, t: &Tr, roles: &shared::Roles, u: &UserInfo, right: &str, clickable: bool) -> egui::Response {
     let p = pal(ui);
     let sense = if clickable { Sense::click() } else { Sense::hover() };
     let (rect, resp) = ui.allocate_exact_size(vec2(ui.available_width(), ROW_H), sense);
@@ -164,7 +200,7 @@ fn row(ui: &mut egui::Ui, t: &Tr, s: &Session, u: &UserInfo, right: &str, clicka
         ui.painter().rect_filled(rect, CornerRadius::same(5), p.hover);
         ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
     }
-    let role = u.role.and_then(|id| s.roles.get(id));
+    let role = u.role.and_then(|id| roles.get(id));
     let color = role.map_or(p.t1, |r| super::roles::color(p, &r.color));
     let icon = Rect::from_min_size(pos2(rect.left() + 8.0, rect.top()), vec2(14.0, ROW_H));
     if let Some((glyph, family)) = role.and_then(|r| super::roles::icon(&r.icon)) {

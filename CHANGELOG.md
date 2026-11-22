@@ -11,6 +11,21 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+**Update:** client only (servers can stay).
+
+### Added
+- Client: **screen sharing on Linux now has sound**, under X11 and Wayland. Sharing a window
+  (X11) sends only that program's sound; sharing the screen sends all sound except Chumly,
+  so viewers do not hear their own voices. Under Wayland the system does not say which
+  window was picked, so it is always all sound except Chumly. Programs that start playing
+  after the share started are picked up.
+
+### Fixed
+- Client (Linux, Wayland): a screen share window no longer freezes in fullscreen or when the
+  main window is minimized. The picture stopped and the window ignored clicks until the
+  share ended. The same applied to the "Your screen" window. When the share ends, the window
+  now always closes, also from fullscreen (it used to stay with a frozen frame).
+
 ## [0.2.0] - 2026-11-22
 
 **Update:** client only (servers can stay). Linux users: the client now needs PipeWire

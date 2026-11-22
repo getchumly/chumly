@@ -103,7 +103,7 @@ impl Sharer {
 
     /// frames: sent frames, lost: dropped because the network
     /// could not keep up.
-    pub fn counters(&self) -> &Counters {
+    pub fn counters(&self) -> &Arc<Counters> {
         &self.counters
     }
 

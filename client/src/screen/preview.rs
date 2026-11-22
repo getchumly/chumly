@@ -4,7 +4,7 @@
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicU8, Ordering};
 
-use eframe::egui::{Color32, ColorImage};
+use eframe::egui::{Color32, ColorImage, ViewportId};
 
 use super::scale::{scale_bgra, target_size};
 
@@ -31,15 +31,26 @@ pub const THUMBNAIL_INTERVAL: std::time::Duration = std::time::Duration::from_mi
 pub struct Preview {
     mode: AtomicU8,
     frame: Mutex<Option<ColorImage>>,
+    /// The "Your screen" window: it draws on its own, so new frames wake
+    /// it as well as the main window (the thumbnail).
+    window: ViewportId,
 }
 
 impl Default for Preview {
     fn default() -> Self {
-        Self { mode: AtomicU8::new(PreviewMode::Off as u8), frame: Mutex::new(None) }
+        Self::new(ViewportId::ROOT)
     }
 }
 
 impl Preview {
+    pub fn new(window: ViewportId) -> Self {
+        Self { mode: AtomicU8::new(PreviewMode::Off as u8), frame: Mutex::new(None), window }
+    }
+
+    pub(super) fn window(&self) -> ViewportId {
+        self.window
+    }
+
     pub fn set_mode(&self, mode: PreviewMode) {
         self.mode.store(mode as u8, Ordering::Relaxed);
         if mode == PreviewMode::Off {

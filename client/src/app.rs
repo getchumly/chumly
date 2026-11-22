@@ -312,12 +312,13 @@ impl App {
         // The "Your screen" window closes once it is no longer drawn.
         self.screen.own_window = None;
         self.screen.preview.set_mode(PreviewMode::Off);
-        self.screen.preview_texture = None;
+        *self.screen.preview_texture.lock().unwrap_or_else(|e| e.into_inner()) = None;
     }
 
     fn stop_watch(&mut self) {
         // The viewer window closes by itself once it is no longer drawn.
-        if self.screen.watching.take().is_some() {
+        if let Some(w) = self.screen.watching.take() {
+            w.stop();
             lock_mixer(&self.audio.mixer).clear_stream();
             self.screen.video.clear();
             if self.session.is_some() {
@@ -433,7 +434,6 @@ impl eframe::App for App {
         }
 
         let mut actions = Vec::new();
-        self.update_video();
         self.update_preview();
         if self.session.is_some() {
             self.draw_main(ui, &mut actions);

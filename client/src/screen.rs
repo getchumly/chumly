@@ -10,7 +10,7 @@
 //! fragments to subscribed viewers.
 //!
 //! Watching works on every platform. Sharing works on Windows and on Linux
-//! under X11 ([`can_share`]); the share's audio only on Windows so far
+//! under X11 and Wayland ([`can_share`]), with the share's audio
 //! ([`CAN_SHARE_AUDIO`]).
 
 use std::sync::Mutex;
@@ -36,8 +36,8 @@ pub fn can_share() -> bool {
     capture::supported()
 }
 
-/// Whether the share's audio can go with the video (Windows only so far).
-pub const CAN_SHARE_AUDIO: bool = cfg!(windows);
+/// Whether the share's audio can go with the video.
+pub const CAN_SHARE_AUDIO: bool = cfg!(any(windows, target_os = "linux"));
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Quality {
@@ -149,6 +149,10 @@ pub struct ScreenShared {
     /// Sharer id; 0 if nothing is being watched.
     watching: AtomicU32,
     incoming: Mutex<Option<std::sync::mpsc::Sender<Vec<u8>>>>,
+    /// The server said the watched share stopped (or we were disconnected).
+    /// Set by the network module itself: the stream window must learn it
+    /// even while the main window is not drawn (see `viewer_window.rs`).
+    ended: AtomicBool,
 }
 
 impl ScreenShared {
@@ -168,12 +172,51 @@ impl ScreenShared {
     }
 
     pub(crate) fn attach(&self, from: shared::UserId, tx: std::sync::mpsc::Sender<Vec<u8>>) {
+        self.ended.store(false, Ordering::Relaxed);
         *self.incoming.lock().unwrap_or_else(|e| e.into_inner()) = Some(tx);
         self.watching.store(from, Ordering::Relaxed);
+    }
+
+    /// `from`'s share stopped; ignored if it is not the one being watched.
+    pub(crate) fn share_ended(&self, from: shared::UserId) {
+        if self.is_watching(from) {
+            self.ended.store(true, Ordering::Relaxed);
+        }
+    }
+
+    /// Whatever is being watched is gone: we were disconnected.
+    pub(crate) fn all_ended(&self) {
+        self.ended.store(true, Ordering::Relaxed);
+    }
+
+    /// The watched share stopped.
+    pub fn ended(&self) -> bool {
+        self.ended.load(Ordering::Relaxed)
     }
 
     pub(crate) fn detach(&self) {
         self.watching.store(0, Ordering::Relaxed);
         *self.incoming.lock().unwrap_or_else(|e| e.into_inner()) = None;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn only_the_watched_share_ending_counts() {
+        let s = ScreenShared::default();
+        let (tx, _rx) = std::sync::mpsc::channel();
+        s.attach(7, tx.clone());
+        s.share_ended(8);
+        assert!(!s.ended(), "someone else stopped sharing");
+        s.share_ended(7);
+        assert!(s.ended());
+        // Watching again starts clean.
+        s.attach(8, tx);
+        assert!(!s.ended());
+        s.all_ended();
+        assert!(s.ended(), "disconnected");
     }
 }

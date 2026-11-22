@@ -137,7 +137,10 @@ impl App {
                     });
                 });
                 if crate::screen::CAN_SHARE_AUDIO {
-                    theme::checkbox(ui, &mut d.audio, t.share_audio, Some(t.share_audio_tip));
+                    // The system dialog does not say which window was picked: all sound but ours.
+                    let portal = d.sources.iter().any(|s| s.id == SourceId::Portal);
+                    let tip = if portal { t.share_audio_tip_portal } else { t.share_audio_tip };
+                    theme::checkbox(ui, &mut d.audio, t.share_audio, Some(tip));
                 } else {
                     // Not available here: shown off and disabled, with the reason.
                     let mut off = false;
