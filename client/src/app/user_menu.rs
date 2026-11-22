@@ -27,7 +27,7 @@ pub(super) fn user_menu(
         ui.close();
     }
     let live = u.streams.contains(&MediaKind::Screen);
-    if live && ui.add_enabled(screen::SUPPORTED, menu_item(icons::MONITOR_PLAY, t.watch)).clicked() {
+    if live && ui.add(menu_item(icons::MONITOR_PLAY, t.watch)).clicked() {
         actions.push(Action::Watch(u.id, u.nickname.clone()));
         ui.close();
     }

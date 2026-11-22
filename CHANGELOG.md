@@ -11,6 +11,11 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+### Added
+- Client: **watching screen shares on Linux.** Linux clients can now open someone's screen
+  share, with its sound. Sharing your own screen is still Windows only. Works with servers
+  of any version.
+
 ### Fixed
 - Client: screen sharing no longer makes the sharer's memory grow. Every share from a
   high-resolution monitor (e.g. 2560×1440) used to keep about 80 MB that was never given

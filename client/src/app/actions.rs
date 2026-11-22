@@ -273,7 +273,7 @@ impl App {
                 self.input.clear();
             }
             Action::OpenShare => {
-                if !screen::SUPPORTED {
+                if !screen::CAN_SHARE {
                     self.toast_err(t.share_unsupported);
                     return;
                 }
@@ -310,10 +310,6 @@ impl App {
             }
             Action::StopShare => self.stop_share(true),
             Action::Watch(user_id, name) => {
-                if !screen::SUPPORTED {
-                    self.toast_err(t.share_unsupported);
-                    return;
-                }
                 if self.screen.watching.as_ref().is_some_and(|w| w.user_id == user_id) {
                     return;
                 }

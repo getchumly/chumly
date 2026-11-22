@@ -1,20 +1,15 @@
-//! Screen sharing on Windows: Windows Graphics Capture for capture,
-//! software OpenH264 for encoding and decoding.
+//! Sharing the screen on Windows: Windows Graphics Capture for capture,
+//! software OpenH264 for encoding. Watching is in `view.rs`, for every platform.
 
-use std::collections::HashMap;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::{Receiver, RecvTimeoutError, SyncSender, TrySendError};
-use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use eframe::egui;
 use openh264::OpenH264API;
-use openh264::decoder::Decoder;
-use openh264::encoder::{
-    BitRate, Complexity, Encoder, EncoderConfig, FrameRate, FrameType, IntraFramePeriod, RateControlMode, UsageType,
-};
+use openh264::encoder::{Encoder, FrameType};
 use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource};
-use shared::ClientMsg;
 use shared::media::{MediaKind, SCREEN_FRAGMENT_DATA, ScreenFragment};
 use windows_capture::capture::{CaptureControl, Context, GraphicsCaptureApiHandler};
 use windows_capture::frame::Frame;
@@ -28,18 +23,12 @@ use windows_capture::window::Window;
 
 use super::audio::{AudioTarget, StreamAudio};
 use super::{
-    Counters, Preview, PreviewMode, Quality, ScreenShared, Source, SourceId, THUMBNAIL_INTERVAL, Timing, preview_image,
-    scale_bgra, target_size,
+    Counters, Preview, PreviewMode, Quality, Source, SourceId, THUMBNAIL_INTERVAL, Timing, encoder_config,
+    preview_image, scale_bgra, target_size,
 };
-use crate::net::NetCommand;
 
 /// Keyframes no more often than this, however many viewers ask.
 const MIN_KEYFRAME_INTERVAL: Duration = Duration::from_millis(300);
-/// Largest H.264 slice. Frames are split into slices so the encoder
-/// can compress them on several threads.
-const MAX_SLICE_BYTES: u32 = 10_000;
-/// A viewer does not request keyframes more often than this.
-const KEYFRAME_RETRY: Duration = Duration::from_millis(500);
 
 /// Monitors and windows available for sharing.
 pub fn sources() -> Vec<Source> {
@@ -343,27 +332,7 @@ impl EncoderThread {
     }
 
     fn encode_loop(&self) -> Result<(), String> {
-        let fps = self.quality.fps();
-        let threads = std::thread::available_parallelism().map_or(2, |n| n.get()).clamp(1, 4) as u16;
-        let config = EncoderConfig::new()
-            // OpenH264 screen content mode spent 200 ms per 1080p frame on moving
-            // content, sometimes over a second. Camera mode handles it in 45 ms,
-            // and in 17 ms with multiple threads.
-            .usage_type(UsageType::CameraVideoRealTime)
-            .rate_control_mode(RateControlMode::Bitrate)
-            .bitrate(BitRate::from_bps(self.quality.bitrate()))
-            .max_frame_rate(FrameRate::from_hz(fps as f32))
-            .complexity(Complexity::Low)
-            // Threads only help when the frame is split into several slices.
-            .max_slice_len(MAX_SLICE_BYTES)
-            .num_threads(threads)
-            // A keyframe every 10 seconds just in case; normally viewers
-            // request them.
-            .intra_frame_period(IntraFramePeriod::from_num_frames(fps * 10))
-            // No frame skipping: otherwise after every heavy keyframe the encoder
-            // dropped the following frames and the video froze. Now quality
-            // dips briefly instead.
-            .skip_frames(false);
+        let config = encoder_config(self.quality);
         let mut encoder = Encoder::with_api_config(OpenH264API::from_source(), config).map_err(|e| e.to_string())?;
         let mut yuv: Option<YUVBuffer> = None;
         let mut last: Option<Captured> = None;
@@ -471,198 +440,12 @@ impl EncoderThread {
     }
 }
 
-/// Watching someone's screen share. Dropping it stops decoding.
-pub struct Viewer {
-    shared: Arc<ScreenShared>,
-    frame: Arc<Mutex<Option<egui::ColorImage>>>,
-    counters: Arc<Counters>,
-}
-
-impl Viewer {
-    pub fn start(
-        user_id: shared::UserId,
-        shared: Arc<ScreenShared>,
-        net: tokio::sync::mpsc::UnboundedSender<NetCommand>,
-        ctx: egui::Context,
-    ) -> Result<Self, String> {
-        let decoder = Decoder::new().map_err(|e| e.to_string())?;
-        let (tx, rx) = std::sync::mpsc::channel();
-        let frame = Arc::new(Mutex::new(None));
-        let slot = frame.clone();
-        let counters = Arc::new(Counters::default());
-        let c = counters.clone();
-        std::thread::Builder::new()
-            .name("screen-decoder".into())
-            .spawn(move || decode_loop(user_id, decoder, rx, slot, c, net, ctx))
-            .map_err(|e| e.to_string())?;
-        shared.attach(user_id, tx);
-        Ok(Self { shared, frame, counters })
-    }
-
-    /// A new frame, if one arrived since the last call.
-    pub fn take_frame(&self) -> Option<egui::ColorImage> {
-        self.frame.lock().unwrap_or_else(|e| e.into_inner()).take()
-    }
-
-    /// frames: displayed frames, lost: lost in the network,
-    /// waiting_key: picture is frozen until a keyframe arrives.
-    pub fn counters(&self) -> &Counters {
-        &self.counters
-    }
-}
-
-impl Drop for Viewer {
-    fn drop(&mut self) {
-        // The channel closes and the decoder thread exits on its own.
-        self.shared.detach();
-    }
-}
-
-/// Reassembles frames from fragments. Fragments may arrive out of order
-/// or get lost: then the frame never completes and is discarded.
-#[derive(Default)]
-struct Assembler {
-    partial: HashMap<u32, Partial>,
-    /// Last completed frame: anything older is no longer needed.
-    newest: Option<u32>,
-}
-
-struct Partial {
-    keyframe: bool,
-    parts: Vec<Option<Vec<u8>>>,
-    received: usize,
-}
-
-struct Assembled {
-    frame_id: u32,
-    keyframe: bool,
-    data: Vec<u8>,
-}
-
-/// `a` is newer than `b`, accounting for counter wraparound.
-fn newer(a: u32, b: u32) -> bool {
-    a != b && a.wrapping_sub(b) < u32::MAX / 2
-}
-
-impl Assembler {
-    fn push(&mut self, f: ScreenFragment<'_>) -> Option<Assembled> {
-        if self.newest.is_some_and(|n| !newer(f.frame_id, n)) {
-            return None;
-        }
-        let p = self.partial.entry(f.frame_id).or_insert_with(|| Partial {
-            keyframe: f.keyframe,
-            parts: vec![None; f.count as usize],
-            received: 0,
-        });
-        let slot = p.parts.get_mut(f.index as usize)?;
-        if slot.is_none() {
-            *slot = Some(f.data.to_vec());
-            p.received += 1;
-        }
-        if p.received < p.parts.len() {
-            // Do not accumulate incomplete frames: keep only the last 8.
-            if self.partial.len() > 16 {
-                let id = f.frame_id;
-                self.partial.retain(|k, _| !newer(id, *k) || id.wrapping_sub(*k) < 8);
-            }
-            return None;
-        }
-        let p = self.partial.remove(&f.frame_id)?;
-        self.newest = Some(f.frame_id);
-        let id = f.frame_id;
-        self.partial.retain(|k, _| newer(*k, id));
-        let data = p.parts.into_iter().flatten().flatten().collect();
-        Some(Assembled { frame_id: id, keyframe: p.keyframe, data })
-    }
-}
-
-fn decode_loop(
-    user_id: shared::UserId,
-    mut decoder: Decoder,
-    rx: Receiver<Vec<u8>>,
-    slot: Arc<Mutex<Option<egui::ColorImage>>>,
-    counters: Arc<Counters>,
-    net: tokio::sync::mpsc::UnboundedSender<NetCommand>,
-    ctx: egui::Context,
-) {
-    let mut asm = Assembler::default();
-    let mut last_id: Option<u32> = None;
-    let mut need_key = true;
-    let mut last_request: Option<Instant> = None;
-    let mut rgba = Vec::new();
-    let request_key = |last: &mut Option<Instant>| {
-        if last.is_none_or(|t| t.elapsed() >= KEYFRAME_RETRY) {
-            *last = Some(Instant::now());
-            let _ = net.send(NetCommand::Send(ClientMsg::RequestKeyframe { user_id }));
-        }
-    };
-
-    while let Ok(payload) = rx.recv() {
-        let Some(fragment) = ScreenFragment::decode(&payload) else { continue };
-        let Some(frame) = asm.push(fragment) else { continue };
-        // A frame was skipped: subsequent frames will decode with errors without it.
-        if let Some(l) = last_id
-            && frame.frame_id != l.wrapping_add(1)
-        {
-            counters.lost.fetch_add(frame.frame_id.wrapping_sub(l).wrapping_sub(1), Ordering::Relaxed);
-            if !frame.keyframe {
-                need_key = true;
-            }
-        }
-        counters.waiting_key.store(need_key && !frame.keyframe, Ordering::Relaxed);
-        last_id = Some(frame.frame_id);
-        if need_key && !frame.keyframe {
-            request_key(&mut last_request);
-            continue;
-        }
-        let t = Instant::now();
-        let image = match decoder.decode(&frame.data) {
-            Ok(Some(yuv)) => {
-                Timing::add(&counters.timing.decode_us, t);
-                let t = Instant::now();
-                let (w, h) = yuv.dimensions();
-                rgba.resize(w * h * 4, 0);
-                yuv.write_rgba8(&mut rgba);
-                let image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
-                Timing::add(&counters.timing.convert_us, t);
-                image
-            }
-            Ok(None) => continue,
-            Err(e) => {
-                tracing::debug!("decoding screen share frame: {e}");
-                need_key = true;
-                request_key(&mut last_request);
-                continue;
-            }
-        };
-        need_key = false;
-        counters.waiting_key.store(false, Ordering::Relaxed);
-        counters.frames.fetch_add(1, Ordering::Relaxed);
-        *slot.lock().unwrap_or_else(|e| e.into_inner()) = Some(image);
-        ctx.request_repaint();
-    }
-}
-
 #[cfg(test)]
 mod tests {
+    use openh264::decoder::Decoder;
+
+    use super::super::view::Assembler;
     use super::*;
-
-    fn frag(frame_id: u32, index: u16, count: u16, data: &[u8]) -> ScreenFragment<'_> {
-        ScreenFragment { frame_id, index, count, keyframe: index == 0 && frame_id == 0, data }
-    }
-
-    #[test]
-    fn assembles_out_of_order_and_drops_stale() {
-        let mut a = Assembler::default();
-        assert!(a.push(frag(0, 1, 2, b"cd")).is_none());
-        let f = a.push(frag(0, 0, 2, b"ab")).unwrap();
-        assert_eq!((f.frame_id, f.data.as_slice()), (0, &b"abcd"[..]));
-        // Frame 1 lost a fragment, frame 2 completed: frame 1 is discarded.
-        assert!(a.push(frag(1, 0, 2, b"x")).is_none());
-        assert_eq!(a.push(frag(2, 0, 1, b"y")).unwrap().frame_id, 2);
-        assert!(a.push(frag(1, 1, 2, b"z")).is_none());
-        assert!(a.partial.is_empty());
-    }
 
     /// Captures the first monitor and checks that frames are encoded and
     /// decoded. Needs a desktop, so it does not run by default.
@@ -769,23 +552,5 @@ mod tests {
             decoded as f64 / el,
             dec_us as f64 / decoded.max(1) as f64 / 1000.0
         );
-    }
-
-    #[test]
-    fn encode_decode_roundtrip() {
-        let (w, h) = (320usize, 240usize);
-        let mut bgra = vec![0u8; w * h * 4];
-        for (i, px) in bgra.chunks_mut(4).enumerate() {
-            px.copy_from_slice(&[(i % w) as u8, (i / w) as u8, 128, 255]);
-        }
-        let config = EncoderConfig::new().usage_type(UsageType::ScreenContentRealTime);
-        let mut enc = Encoder::with_api_config(OpenH264API::from_source(), config).unwrap();
-        let mut yuv = YUVBuffer::new(w, h);
-        yuv.read_bgra8(BgraSliceU8::new(&bgra, (w, h)));
-        let data = enc.encode(&yuv).unwrap().to_vec();
-        assert!(!data.is_empty());
-        let mut dec = Decoder::new().unwrap();
-        let out = dec.decode(&data).unwrap().expect("frame decoded");
-        assert_eq!(out.dimensions(), (w, h));
     }
 }

@@ -5,26 +5,28 @@
 //! Viewer: reassembling frames from fragments, decoding, handing the
 //! picture to the UI. The server only forwards fragments to subscribed viewers.
 //!
-//! Only implemented on Windows so far. On other platforms
-//! [`SUPPORTED`] is `false`: the client does not tell the server it can
-//! show video, and the UI buttons are disabled.
+//! Watching works on every platform. Sharing is only implemented on
+//! Windows so far: elsewhere [`CAN_SHARE`] is `false` and the share
+//! buttons are disabled.
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
 
 #[cfg(windows)]
 mod audio;
+mod view;
 #[cfg(windows)]
 mod win;
 
+pub use view::Viewer;
 #[cfg(windows)]
-pub use win::{Sharer, Viewer, sources};
+pub use win::{Sharer, sources};
 
 #[cfg(not(windows))]
-pub use stub::{Sharer, Viewer, sources};
+pub use stub::{Sharer, sources};
 
-/// Whether screen sharing is available on this platform.
-pub const SUPPORTED: bool = cfg!(windows);
+/// Whether this platform can share its screen. Watching is always available.
+pub const CAN_SHARE: bool = cfg!(windows);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Quality {
@@ -72,6 +74,40 @@ impl Quality {
             Quality::P1080F60 => 12_000_000,
         }
     }
+}
+
+/// Largest H.264 slice. Frames are split into slices so the encoder
+/// can compress them on several threads.
+const MAX_SLICE_BYTES: u32 = 10_000;
+
+/// The sharer's encoder settings. Shared with the tests on every platform:
+/// they check that viewers decode exactly this stream.
+#[cfg_attr(not(windows), allow(dead_code))]
+fn encoder_config(quality: Quality) -> openh264::encoder::EncoderConfig {
+    use openh264::encoder::{
+        BitRate, Complexity, EncoderConfig, FrameRate, IntraFramePeriod, RateControlMode, UsageType,
+    };
+    let fps = quality.fps();
+    let threads = std::thread::available_parallelism().map_or(2, |n| n.get()).clamp(1, 4) as u16;
+    EncoderConfig::new()
+        // OpenH264 screen content mode spent 200 ms per 1080p frame on moving
+        // content, sometimes over a second. Camera mode handles it in 45 ms,
+        // and in 17 ms with multiple threads.
+        .usage_type(UsageType::CameraVideoRealTime)
+        .rate_control_mode(RateControlMode::Bitrate)
+        .bitrate(BitRate::from_bps(quality.bitrate()))
+        .max_frame_rate(FrameRate::from_hz(fps as f32))
+        .complexity(Complexity::Low)
+        // Threads only help when the frame is split into several slices.
+        .max_slice_len(MAX_SLICE_BYTES)
+        .num_threads(threads)
+        // A keyframe every 10 seconds just in case; normally viewers
+        // request them.
+        .intra_frame_period(IntraFramePeriod::from_num_frames(fps * 10))
+        // No frame skipping: otherwise after every heavy keyframe the encoder
+        // dropped the following frames and the video froze. Now quality
+        // dips briefly instead.
+        .skip_frames(false)
 }
 
 /// What to share: a monitor by index or a window by its HWND. Only the
@@ -316,8 +352,7 @@ pub fn scale_bgra(src: &[u8], sw: usize, sh: usize, pitch: usize, dw: usize, dh:
 mod stub {
     use std::sync::Arc;
 
-    use super::{Counters, Preview, Quality, ScreenShared, Source, SourceId};
-    use crate::net::NetCommand;
+    use super::{Counters, Preview, Quality, Source, SourceId};
 
     pub fn sources() -> Vec<Source> {
         Vec::new()
@@ -348,25 +383,6 @@ mod stub {
         }
         pub fn counters(&self) -> &Counters {
             unreachable!("Sharer is never created on this platform")
-        }
-    }
-
-    pub struct Viewer;
-
-    impl Viewer {
-        pub fn start(
-            _user_id: shared::UserId,
-            _shared: Arc<ScreenShared>,
-            _net: tokio::sync::mpsc::UnboundedSender<NetCommand>,
-            _ctx: eframe::egui::Context,
-        ) -> Result<Self, String> {
-            Err("screen sharing is currently only available on Windows".into())
-        }
-        pub fn take_frame(&self) -> Option<eframe::egui::ColorImage> {
-            None
-        }
-        pub fn counters(&self) -> &Counters {
-            unreachable!("Viewer is never created on this platform")
         }
     }
 }
