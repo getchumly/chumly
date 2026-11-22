@@ -268,11 +268,18 @@ pub fn target_size(w: u32, h: u32, max_h: u32) -> (u32, u32) {
     ((tw & !1).max(2), (th & !1).max(2))
 }
 
-/// Downscales a BGRA image with bilinear interpolation. `pitch` is the
-/// source row length in bytes: for captured frames it can exceed
-/// width × 4. Rows are split across several threads.
+/// Downscales a BGRA image (bilinear filter, SIMD). `pitch` is the source
+/// row length in bytes: for captured frames it can exceed width × 4.
+///
+/// Runs on the calling thread on purpose. It used to split rows across
+/// threads spawned for every frame, and in the running client (not in
+/// headless tests) the OpenGL driver kept memory for every thread created:
+/// about 80 MB per 5-second share from a 2560×1440 monitor.
 #[cfg_attr(not(windows), allow(dead_code))]
 pub fn scale_bgra(src: &[u8], sw: usize, sh: usize, pitch: usize, dw: usize, dh: usize) -> Vec<u8> {
+    use fast_image_resize::images::{CroppedImage, Image, ImageRef};
+    use fast_image_resize::{FilterType, PixelType, ResizeAlg, ResizeOptions, Resizer};
+
     let mut dst = vec![0u8; dw * dh * 4];
     if sw == dw && sh == dh {
         for (y, row) in dst.chunks_exact_mut(dw * 4).enumerate() {
@@ -280,37 +287,28 @@ pub fn scale_bgra(src: &[u8], sw: usize, sh: usize, pitch: usize, dw: usize, dh:
         }
         return dst;
     }
-    // Neighbor pixel weight in 1/256 units.
-    let pos = |d: usize, dn: usize, sn: usize| -> (usize, u32) {
-        let f = ((d as f32 + 0.5) * sn as f32 / dn as f32 - 0.5).max(0.0);
-        let i = (f as usize).min(sn - 1);
-        (i, ((f - i as f32) * 256.0) as u32)
+    thread_local! {
+        // Keeps its scratch buffers between frames.
+        static RESIZER: std::cell::RefCell<Resizer> = std::cell::RefCell::new(Resizer::new());
+    }
+    let mut resize = || -> Result<(), String> {
+        // The source as an image as wide as a whole row (padding included),
+        // then a view of its visible part. A view, not `ResizeOptions::crop`:
+        // with crop the filter still reads pixels past the edge, and the
+        // padding showed up as a stripe along the right side.
+        let whole = ImageRef::new((pitch / 4) as u32, sh as u32, src, PixelType::U8x4).map_err(|e| e.to_string())?;
+        let visible = CroppedImage::new(&whole, 0, 0, sw as u32, sh as u32).map_err(|e| e.to_string())?;
+        let mut dst_img =
+            Image::from_slice_u8(dw as u32, dh as u32, &mut dst, PixelType::U8x4).map_err(|e| e.to_string())?;
+        let options = ResizeOptions::new()
+            .resize_alg(ResizeAlg::Convolution(FilterType::Bilinear))
+            // Capture alpha is not meaningful: no premultiplication.
+            .use_alpha(false);
+        RESIZER.with_borrow_mut(|r| r.resize(&visible, &mut dst_img, &options)).map_err(|e| e.to_string())
     };
-    let xs: Vec<(usize, u32)> = (0..dw).map(|x| pos(x, dw, sw)).collect();
-    let xs = &xs;
-    let threads = std::thread::available_parallelism().map_or(4, |n| n.get()).clamp(1, 4);
-    let rows_per = dh.div_ceil(threads);
-    std::thread::scope(|s| {
-        for (ci, chunk) in dst.chunks_mut(rows_per * dw * 4).enumerate() {
-            s.spawn(move || {
-                for (ry, row) in chunk.chunks_exact_mut(dw * 4).enumerate() {
-                    let (y0, wy) = pos(ci * rows_per + ry, dh, sh);
-                    let y1 = (y0 + 1).min(sh - 1);
-                    let r0 = &src[y0 * pitch..];
-                    let r1 = &src[y1 * pitch..];
-                    for (x, px) in row.as_chunks_mut::<4>().0.iter_mut().enumerate() {
-                        let (x0, wx) = xs[x];
-                        let x1 = (x0 + 1).min(sw - 1);
-                        for c in 0..4 {
-                            let top = r0[x0 * 4 + c] as u32 * (256 - wx) + r0[x1 * 4 + c] as u32 * wx;
-                            let bot = r1[x0 * 4 + c] as u32 * (256 - wx) + r1[x1 * 4 + c] as u32 * wx;
-                            px[c] = ((top * (256 - wy) + bot * wy) >> 16) as u8;
-                        }
-                    }
-                }
-            });
-        }
-    });
+    if let Err(e) = resize() {
+        tracing::warn!("downscaling frame: {e}");
+    }
     dst
 }
 
@@ -422,6 +420,22 @@ mod tests {
         p.set_mode(PreviewMode::Off);
         assert!(p.take_frame().is_none());
         assert_eq!(p.mode(), PreviewMode::Off);
+    }
+
+    #[test]
+    fn scale_down_ignores_row_padding() {
+        // 8x4 visible pixels of one color, rows padded to 10 pixels with white.
+        let (sw, sh, pitch) = (8, 4, 10 * 4);
+        let mut src = Vec::new();
+        for _ in 0..sh {
+            src.extend([10u8, 20, 30, 255].repeat(sw));
+            src.extend([255u8; 8]);
+        }
+        let out = scale_bgra(&src, sw, sh, pitch, 4, 2);
+        assert_eq!(out.len(), 4 * 2 * 4);
+        for px in out.chunks(4) {
+            assert!(px[..3].iter().zip([10, 20, 30]).all(|(a, b)| a.abs_diff(b) <= 1), "padding leaked: {px:?}");
+        }
     }
 
     #[test]

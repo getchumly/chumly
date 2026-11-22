@@ -43,6 +43,8 @@ rcgen = "0.13"
 # Self-update: the release signature (minisign) and swapping the running executable.
 minisign-verify = "0.2"
 self-replace = "1"
+# Downscaling captured frames (SIMD, single-threaded; see screen::scale_bgra).
+fast_image_resize = { version = "6.2", features = ["only_u8x4"] }
 
 [dev-dependencies]
 tempfile = "3"

@@ -11,6 +11,12 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+### Fixed
+- Client: screen sharing no longer makes the sharer's memory grow. Every share from a
+  high-resolution monitor (e.g. 2560×1440) used to keep about 80 MB that was never given
+  back, so starting and stopping a share several times pushed the client to 1 GB and more.
+  Frames are also downscaled with less work: the sharer's CPU load dropped by about a fifth.
+
 ## [0.1.2] - 2026-11-21
 
 **Update:** client only (servers can stay). This is the last update you install by hand:
