@@ -24,19 +24,32 @@ pub use win::sources;
 pub(super) use win::start;
 
 #[cfg(target_os = "linux")]
+mod portal;
+#[cfg(target_os = "linux")]
 mod x11;
-#[cfg(target_os = "linux")]
-pub use x11::sources;
-#[cfg(target_os = "linux")]
-pub(super) use x11::start;
 
-/// Whether this session can share its screen: always on Windows; on Linux
-/// only under X11 (Wayland needs the desktop portal, not done yet).
+/// Linux: X11 lists monitors and windows itself; under Wayland the system
+/// dialog of the desktop portal picks, so there is one entry for it.
+#[cfg(target_os = "linux")]
+pub fn sources() -> Vec<super::Source> {
+    if x11::session_supported() { x11::sources() } else { portal::sources() }
+}
+
+#[cfg(target_os = "linux")]
+pub(super) fn start(source: super::SourceId, sink: FrameSink) -> Result<Box<dyn Capture>, String> {
+    match source {
+        super::SourceId::Portal => portal::start(sink),
+        _ => x11::start(source, sink),
+    }
+}
+
+/// Whether this session can share its screen: Windows, Linux under X11 or
+/// Wayland (through the desktop portal).
 pub fn supported() -> bool {
     #[cfg(windows)]
     return true;
     #[cfg(target_os = "linux")]
-    return x11::session_supported();
+    return x11::session_supported() || portal::session_supported();
     #[cfg(not(any(windows, target_os = "linux")))]
     return false;
 }

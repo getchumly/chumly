@@ -371,6 +371,8 @@ strings! {
     share_screens => "Экраны", "Screens";
     share_windows => "Окна", "Windows";
     share_screen_n => "Экран {n}", "Screen {n}";
+    share_portal => "Выбрать в системном окне", "Choose in the system dialog";
+    share_portal_meta => "экран или окно", "screen or window";
     share_quality => "Качество", "Quality";
     share_start => "Начать", "Start";
     share_note => "Видео сжимает процессор: чем выше качество, тем больше нагрузка.", "Video is encoded on the CPU: higher quality means more load.";

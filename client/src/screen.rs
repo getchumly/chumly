@@ -90,6 +90,9 @@ impl Quality {
 pub enum SourceId {
     Monitor(usize),
     Window(isize),
+    /// Whatever the user picks in the system dialog (Wayland's desktop portal).
+    #[cfg_attr(not(target_os = "linux"), allow(dead_code))]
+    Portal,
 }
 
 #[derive(Clone, Debug)]

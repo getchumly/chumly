@@ -87,8 +87,11 @@ impl App {
                             .auto_shrink([false, false])
                             .show(ui, |ui| {
                                 ui.spacing_mut().item_spacing.y = 2.0;
-                                let screens: Vec<&Source> =
-                                    d.sources.iter().filter(|s| matches!(s.id, SourceId::Monitor(_))).collect();
+                                let screens: Vec<&Source> = d
+                                    .sources
+                                    .iter()
+                                    .filter(|s| matches!(s.id, SourceId::Monitor(_) | SourceId::Portal))
+                                    .collect();
                                 let windows: Vec<&Source> =
                                     d.sources.iter().filter(|s| matches!(s.id, SourceId::Window(_))).collect();
                                 for (caption, group, icon) in [
@@ -107,8 +110,14 @@ impl App {
                                         let name = match src.id {
                                             SourceId::Monitor(_) => fill(t.share_screen_n, &[("n", &src.label)]),
                                             SourceId::Window(_) => src.label.clone(),
+                                            SourceId::Portal => t.share_portal.to_owned(),
                                         };
-                                        let row = source_row(ui, icon, &name, &src.meta, d.selected == Some(src.id));
+                                        let meta = if src.id == SourceId::Portal {
+                                            t.share_portal_meta
+                                        } else {
+                                            src.meta.as_str()
+                                        };
+                                        let row = source_row(ui, icon, &name, meta, d.selected == Some(src.id));
                                         if row.clicked() {
                                             d.selected = Some(src.id);
                                         }

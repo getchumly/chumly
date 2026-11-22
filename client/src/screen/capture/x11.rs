@@ -177,6 +177,8 @@ pub(in crate::screen) fn start(source: SourceId, sink: FrameSink) -> Result<Box<
     }
     let atoms = Atoms::new(&conn)?;
     let (target, process) = match source {
+        // Picked through the portal, never here (see `capture::start`).
+        SourceId::Portal => return Err("not an X11 source".into()),
         SourceId::Monitor(index) => {
             let list = monitors(&conn, root)?;
             let &(x, y, width, height) = list.get(index.wrapping_sub(1)).ok_or("monitor not found")?;

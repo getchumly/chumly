@@ -277,9 +277,12 @@ impl App {
                     self.toast_err(t.share_unsupported);
                     return;
                 }
+                let sources = screen::sources();
+                // A single entry (Wayland's "choose in the system dialog") is preselected.
+                let selected = if let [only] = sources.as_slice() { Some(only.id) } else { None };
                 self.screen.dialog = Some(ShareDialog {
-                    sources: screen::sources(),
-                    selected: None,
+                    sources,
+                    selected,
                     quality: self.cfg.share.quality,
                     audio: self.cfg.share.audio,
                 });

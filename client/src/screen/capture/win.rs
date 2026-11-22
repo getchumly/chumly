@@ -119,6 +119,8 @@ struct WinCapture {
 /// Starts capturing `source`.
 pub(in crate::screen) fn start(source: SourceId, sink: FrameSink) -> Result<Box<dyn Capture>, String> {
     let (control, hwnd, process) = match source {
+        // Only Wayland picks through a system dialog.
+        SourceId::Portal => return Err("not available on Windows".into()),
         SourceId::Monitor(index) => {
             let m = Monitor::from_index(index).map_err(|e| e.to_string())?;
             (start_capture(m, sink)?, None, None)

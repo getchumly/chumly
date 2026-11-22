@@ -66,6 +66,10 @@ windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_Wind
 x11rb = { version = "0.13", features = ["shm", "randr", "xfixes", "composite"] }
 # System V shared memory for the X11 frames.
 libc = "0.2"
+# Screen capture under Wayland (screen/capture/portal.rs): the desktop portal's
+# ScreenCast over D-Bus (0.13: same zbus 5 as accesskit), then a PipeWire stream.
+ashpd = { version = "0.13.4", default-features = false, features = ["tokio", "screencast"] }
+pipewire = "0.10"
 # Self-update: the Linux release is a .tar.gz with the executable inside.
 flate2 = "1"
 tar = "0.4"
