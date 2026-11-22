@@ -1,2 +1,6 @@
 # Signed test files: their bytes must stay exactly as released (no CRLF on Windows checkouts).
 client/testdata/** binary
+# Sources and the release signing key always use LF, whatever tool commits them
+# (a commit once turned minisign.pub and a source file into CRLF).
+*.rs text eol=lf
+minisign.pub text eol=lf

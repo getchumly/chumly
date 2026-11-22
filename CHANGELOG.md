@@ -11,15 +11,16 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+**Update:** client only (servers can stay). Linux users: the client now needs PipeWire
+(`libpipewire-0.3`), which desktop systems normally have.
+
 ### Added
 - Client: **screen sharing on Linux.** With X11 (Linux Mint, Ubuntu on Xorg and similar):
   a monitor or a window, with the mouse pointer; a covered window is still shared. With
   Wayland (Ubuntu, Fedora, KDE): the system dialog asks what to share. No sound yet
-  (Windows only for now). The Linux client now needs PipeWire (`libpipewire-0.3`), which
-  desktop systems normally have.
-- Client: **watching screen shares on Linux.** Linux clients can now open someone's screen
-  share, with its sound. Sharing your own screen is still Windows only. Works with servers
-  of any version.
+  (Windows only for now).
+- Client: **watching screen shares on Linux**, with their sound. Works with servers of any
+  version.
 
 ### Changed
 - Client: watching a screen share takes less CPU: the picture's colors are now converted by
