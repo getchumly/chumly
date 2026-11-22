@@ -9,8 +9,8 @@ A small self-hosted voice chat: a desktop client and a lightweight server, writt
 - Voice over QUIC datagrams, Opus codec, noise suppression (RNNoise), jitter buffer with FEC
 - Push-to-talk or voice activation, global hotkeys for mute/deafen
 - Channels with user limits, text chat, private messages
-- Screen sharing with audio (H.264, Windows only for now) and a live preview of your own
-  stream; everyone sees who is watching
+- Screen sharing (H.264) on Windows and Linux (X11 and Wayland), with audio on Windows for
+  now, and a live preview of your own stream; everyone sees who is watching
 - Event sounds in groups that can be silenced one by one, with their own volume
 - Server roles bound to user keys (owner, admin, moderator by default; your own roles with chosen rights), registered nicknames; kick, ban and channel
   management from the client or the server console
@@ -43,7 +43,7 @@ Prebuilt binaries are on the [Releases](../../releases) page:
 | Archive | Platform |
 |---|---|
 | `chumly-client-windows-x64` | Client, Windows 10+ |
-| `chumly-client-linux-x64` | Client, Linux (no screen sharing; push-to-talk needs X11) |
+| `chumly-client-linux-x64` | Client, Linux x86_64: Ubuntu 22.04, Mint 21, Debian 12 or newer; needs PipeWire (`libpipewire-0.3`, desktop systems have it); push-to-talk needs X11 |
 | `chumly-server-linux-x64` | Server, Linux x86_64 |
 | `chumly-server-linux-arm64` | Server, Raspberry Pi (64-bit OS) and other ARM64 Linux |
 | `chumly-server-windows-x64` | Server, Windows |
@@ -366,7 +366,10 @@ cargo build --release -p server    # chumly-server(.exe)
 cargo test                         # unit tests
 ```
 
-On Linux the client needs `libasound2-dev libx11-dev libxkbcommon-dev libwayland-dev`.
+On Linux the client needs `libasound2-dev libx11-dev libxkbcommon-dev libwayland-dev
+libpipewire-0.3-dev libclang-dev`. PipeWire headers must be 1.x (Ubuntu 24.04 and newer);
+on older systems see `.github/scripts/pipewire-headers.sh`, which the release build uses on
+Ubuntu 22.04.
 
 Cross-compiling the server for a Raspberry Pi with [cargo-zigbuild](https://github.com/rust-cross/cargo-zigbuild):
 
