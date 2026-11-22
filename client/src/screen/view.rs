@@ -2,7 +2,7 @@
 //! fragments, OpenH264 decoding, handing the picture to the UI.
 
 use std::collections::HashMap;
-use std::sync::atomic::Ordering;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
@@ -19,11 +19,79 @@ use crate::net::NetCommand;
 /// A viewer does not request keyframes more often than this.
 const KEYFRAME_RETRY: Duration = Duration::from_millis(500);
 
+/// A decoded frame as the decoder gives it: YUV 4:2:0, full-size Y and
+/// half-size U and V planes, each row `stride` bytes long. The UI converts it
+/// to colors on the GPU (or on the CPU if that is not available).
+pub struct YuvFrame {
+    pub width: usize,
+    pub height: usize,
+    pub y: Vec<u8>,
+    pub u: Vec<u8>,
+    pub v: Vec<u8>,
+    /// Row lengths in bytes of Y, U and V.
+    pub strides: (usize, usize, usize),
+}
+
+impl YuvFrame {
+    /// Width and height of the U and V planes.
+    pub fn chroma_size(&self) -> (usize, usize) {
+        (self.width.div_ceil(2), self.height.div_ceil(2))
+    }
+
+    /// Converts to RGBA on the CPU: the fallback when the GPU path is not
+    /// available. Limited-range BT.601, the same as the GPU shader and OpenH264.
+    pub fn to_color_image(&self) -> egui::ColorImage {
+        let (w, h) = (self.width, self.height);
+        let mut pixels = Vec::with_capacity(w * h);
+        for row in 0..h {
+            let ys = &self.y[row * self.strides.0..][..w];
+            let us = &self.u[(row / 2) * self.strides.1..];
+            let vs = &self.v[(row / 2) * self.strides.2..];
+            for (col, &y) in ys.iter().enumerate() {
+                let [r, g, b] = bt601(y, us[col / 2], vs[col / 2]);
+                pixels.push(egui::Color32::from_rgb(r, g, b));
+            }
+        }
+        egui::ColorImage::new([w, h], pixels)
+    }
+}
+
+/// One limited-range BT.601 pixel to RGB, with OpenH264's coefficients.
+pub fn bt601(y: u8, u: u8, v: u8) -> [u8; 3] {
+    let y = (f32::from(y) - 16.0) * (255.0 / 219.0);
+    let u = f32::from(u) - 128.0;
+    let v = f32::from(v) - 128.0;
+    let k = 255.0 / 224.0;
+    let r = y + k * 1.402 * v;
+    let g = y - k * 1.402 * 0.299 / 0.587 * v - k * 1.772 * 0.114 / 0.587 * u;
+    let b = y + k * 1.772 * u;
+    [r, g, b].map(|c| c.clamp(0.0, 255.0) as u8)
+}
+
+/// A decoded frame for the UI.
+pub enum Frame {
+    /// YUV planes, for the GPU renderer.
+    Yuv(YuvFrame),
+    /// Already converted on the decoder thread: when the GPU path is not
+    /// available (see [`Viewer::convert_on_cpu`]).
+    Rgba(egui::ColorImage),
+}
+
+impl Frame {
+    pub fn size(&self) -> [usize; 2] {
+        match self {
+            Frame::Yuv(f) => [f.width, f.height],
+            Frame::Rgba(img) => img.size,
+        }
+    }
+}
+
 /// Watching someone's screen share. Dropping it stops decoding.
 pub struct Viewer {
     shared: Arc<ScreenShared>,
-    frame: Arc<Mutex<Option<egui::ColorImage>>>,
+    frame: Arc<Mutex<Option<Frame>>>,
     counters: Arc<Counters>,
+    rgba: Arc<AtomicBool>,
 }
 
 impl Viewer {
@@ -36,20 +104,26 @@ impl Viewer {
         let decoder = Decoder::new().map_err(|e| e.to_string())?;
         let (tx, rx) = std::sync::mpsc::channel();
         let frame = Arc::new(Mutex::new(None));
-        let slot = frame.clone();
         let counters = Arc::new(Counters::default());
-        let c = counters.clone();
+        let rgba = Arc::new(AtomicBool::new(false));
+        let out = Output { slot: frame.clone(), counters: counters.clone(), rgba: rgba.clone() };
         std::thread::Builder::new()
             .name("screen-decoder".into())
-            .spawn(move || decode_loop(user_id, decoder, rx, slot, c, net, ctx))
+            .spawn(move || decode_loop(user_id, decoder, rx, out, net, ctx))
             .map_err(|e| e.to_string())?;
         shared.attach(user_id, tx);
-        Ok(Self { shared, frame, counters })
+        Ok(Self { shared, frame, counters, rgba })
     }
 
     /// A new frame, if one arrived since the last call.
-    pub fn take_frame(&self) -> Option<egui::ColorImage> {
+    pub fn take_frame(&self) -> Option<Frame> {
         self.frame.lock().unwrap_or_else(|e| e.into_inner()).take()
+    }
+
+    /// From now on the decoder thread converts frames to RGBA itself (with
+    /// OpenH264's converter, as before the GPU path): the GPU path failed.
+    pub fn convert_on_cpu(&self) {
+        self.rgba.store(true, Ordering::Relaxed);
     }
 
     /// frames: displayed frames, lost: lost in the network,
@@ -124,20 +198,28 @@ impl Assembler {
     }
 }
 
+/// Where the decoder thread puts its frames, and how.
+struct Output {
+    slot: Arc<Mutex<Option<Frame>>>,
+    counters: Arc<Counters>,
+    /// Convert to RGBA here instead of handing over YUV planes.
+    rgba: Arc<AtomicBool>,
+}
+
 fn decode_loop(
     user_id: shared::UserId,
     mut decoder: Decoder,
     rx: Receiver<Vec<u8>>,
-    slot: Arc<Mutex<Option<egui::ColorImage>>>,
-    counters: Arc<Counters>,
+    out: Output,
     net: tokio::sync::mpsc::UnboundedSender<NetCommand>,
     ctx: egui::Context,
 ) {
+    let Output { slot, counters, rgba: want_rgba } = out;
+    let mut rgba = Vec::new();
     let mut asm = Assembler::default();
     let mut last_id: Option<u32> = None;
     let mut need_key = true;
     let mut last_request: Option<Instant> = None;
-    let mut rgba = Vec::new();
     let request_key = |last: &mut Option<Instant>| {
         if last.is_none_or(|t| t.elapsed() >= KEYFRAME_RETRY) {
             *last = Some(Instant::now());
@@ -168,10 +250,23 @@ fn decode_loop(
             Ok(Some(yuv)) => {
                 Timing::add(&counters.timing.decode_us, t);
                 let t = Instant::now();
-                let (w, h) = yuv.dimensions();
-                rgba.resize(w * h * 4, 0);
-                yuv.write_rgba8(&mut rgba);
-                let image = egui::ColorImage::from_rgba_unmultiplied([w, h], &rgba);
+                let (width, height) = yuv.dimensions();
+                let image = if want_rgba.load(Ordering::Relaxed) {
+                    rgba.resize(width * height * 4, 0);
+                    yuv.write_rgba8(&mut rgba);
+                    Frame::Rgba(egui::ColorImage::from_rgba_unmultiplied([width, height], &rgba))
+                } else {
+                    // Only copy the planes out of the decoder's buffer: colors
+                    // are converted later, on the GPU.
+                    Frame::Yuv(YuvFrame {
+                        width,
+                        height,
+                        y: yuv.y().to_vec(),
+                        u: yuv.u().to_vec(),
+                        v: yuv.v().to_vec(),
+                        strides: yuv.strides(),
+                    })
+                };
                 Timing::add(&counters.timing.convert_us, t);
                 image
             }
@@ -256,8 +351,35 @@ mod tests {
             if let Some(out) = dec.decode(&frame.data).unwrap() {
                 assert_eq!(out.dimensions(), (w, h));
                 decoded += 1;
+                if frame_id == 9 {
+                    // Our conversion (the GPU shader uses the same formulas)
+                    // matches OpenH264's on a real decoded frame.
+                    let ours = YuvFrame {
+                        width: w,
+                        height: h,
+                        y: out.y().to_vec(),
+                        u: out.u().to_vec(),
+                        v: out.v().to_vec(),
+                        strides: out.strides(),
+                    }
+                    .to_color_image();
+                    let mut theirs = vec![0u8; w * h * 4];
+                    out.write_rgba8(&mut theirs);
+                    for (a, b) in ours.pixels.iter().zip(theirs.chunks(4)) {
+                        let d = [a.r().abs_diff(b[0]), a.g().abs_diff(b[1]), a.b().abs_diff(b[2])];
+                        assert!(d.iter().all(|&d| d <= 1), "{a:?} vs {b:?}");
+                    }
+                }
             }
         }
         assert_eq!(decoded, 10, "every frame decodes");
+    }
+
+    #[test]
+    fn bt601_range() {
+        assert_eq!(bt601(16, 128, 128), [0, 0, 0]);
+        assert_eq!(bt601(235, 128, 128), [255, 255, 255]);
+        // OpenH264's own test value.
+        assert_eq!(bt601(235, 240, 240), [255, 120, 255]);
     }
 }

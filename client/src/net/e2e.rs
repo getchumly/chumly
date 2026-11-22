@@ -596,7 +596,7 @@ fn screen_share(a: &TestClient, alice: UserId, b: &TestClient, bob: UserId) {
         assert!(Instant::now() < deadline, "screen share frame did not reach bob");
         std::thread::sleep(Duration::from_millis(20));
     };
-    assert_eq!(image.size, [w, h]);
+    assert_eq!(image.size(), [w, h]);
 
     // Screen share audio reaches the viewer's mixer.
     let mut enc = opus::Encoder::new(48_000, opus::Channels::Stereo, opus::Application::Audio).unwrap();

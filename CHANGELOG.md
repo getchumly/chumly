@@ -16,6 +16,12 @@ a client and a server one version step apart keep working.
   share, with its sound. Sharing your own screen is still Windows only. Works with servers
   of any version.
 
+### Changed
+- Client: watching a screen share takes less CPU: the picture's colors are now converted by
+  the graphics card, and 2.5 times less data goes to it per frame. If the graphics card
+  cannot do this (very old OpenGL), the client converts on the CPU as before. Hovering the
+  stats in the viewer window shows the time per frame of each stage.
+
 ### Fixed
 - Client: screen sharing no longer makes the sharer's memory grow. Every share from a
   high-resolution monitor (e.g. 2560×1440) used to keep about 80 MB that was never given

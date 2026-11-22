@@ -18,7 +18,7 @@ mod view;
 #[cfg(windows)]
 mod win;
 
-pub use view::Viewer;
+pub use view::{Frame, Viewer, YuvFrame};
 #[cfg(windows)]
 pub use win::{Sharer, sources};
 

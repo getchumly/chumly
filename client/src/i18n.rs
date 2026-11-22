@@ -399,6 +399,9 @@ strings! {
     waiting_video => "Ожидание видео…", "Waiting for video…";
     fullscreen => "На весь экран", "Fullscreen";
     stream_stats => "{fps} кадр/с · потеряно кадров: {lost}", "{fps} fps · frames lost: {lost}";
+    stream_timing => "На кадр: декодирование {dec} мс · подготовка {copy} мс · вывод {show} мс ({mode})", "Per frame: decoding {dec} ms · preparing {copy} ms · display {show} ms ({mode})";
+    video_gpu => "цвет на видеокарте", "colors on the GPU";
+    video_cpu => "цвет на процессоре", "colors on the CPU";
     waiting_keyframe => "ждём ключевой кадр", "waiting for keyframe";
     share_audio => "Транслировать звук", "Share audio";
     share_audio_tip => "Окно: звук только этой программы. Экран: весь звук, кроме Chumly.", "Window: only that app's sound. Screen: all sound except Chumly.";
