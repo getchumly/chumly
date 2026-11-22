@@ -127,7 +127,15 @@ impl App {
                         theme::segmented(ui, &mut d.quality, &options);
                     });
                 });
-                theme::checkbox(ui, &mut d.audio, t.share_audio, Some(t.share_audio_tip));
+                if crate::screen::CAN_SHARE_AUDIO {
+                    theme::checkbox(ui, &mut d.audio, t.share_audio, Some(t.share_audio_tip));
+                } else {
+                    // Not available here: shown off and disabled, with the reason.
+                    let mut off = false;
+                    ui.add_enabled_ui(false, |ui| {
+                        theme::checkbox(ui, &mut off, t.share_audio, Some(t.share_audio_unavailable))
+                    });
+                }
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     ui.label(theme::text(icons::CPU, 14.0).color(p.t3));

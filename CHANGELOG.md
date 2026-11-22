@@ -12,6 +12,9 @@ a client and a server one version step apart keep working.
 ## [Unreleased]
 
 ### Added
+- Client: **screen sharing on Linux with X11** (Linux Mint, Ubuntu on Xorg and similar): a
+  monitor or a window, with the mouse pointer; a covered window is still shared. No sound
+  yet (Windows only for now); on Wayland sharing stays off for now.
 - Client: **watching screen shares on Linux.** Linux clients can now open someone's screen
   share, with its sound. Sharing your own screen is still Windows only. Works with servers
   of any version.
@@ -27,6 +30,10 @@ a client and a server one version step apart keep working.
   high-resolution monitor (e.g. 2560×1440) used to keep about 80 MB that was never given
   back, so starting and stopping a share several times pushed the client to 1 GB and more.
   Frames are also downscaled with less work: the sharer's CPU load dropped by about a fifth.
+
+### Security
+- Client: updated the `url` library (RUSTSEC-2026-0592, a crash on crafted `blob:` links;
+  the client only uses it to open links in the browser).
 
 ## [0.1.2] - 2026-11-21
 

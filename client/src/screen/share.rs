@@ -69,7 +69,8 @@ impl Sharer {
                 return Err(e);
             }
         };
-        let (audio, audio_error) = if with_audio {
+        // Where share audio is not available the dialog does not offer it.
+        let (audio, audio_error) = if with_audio && super::CAN_SHARE_AUDIO {
             let target = match capture.audio_process() {
                 Some(pid) => AudioTarget::Only(pid),
                 // Everything but Chumly itself: viewers must not hear their own voices.

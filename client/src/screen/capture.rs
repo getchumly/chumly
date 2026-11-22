@@ -23,15 +23,33 @@ pub use win::sources;
 #[cfg(windows)]
 pub(super) use win::start;
 
-/// No capture on this platform yet: nothing to share.
-#[cfg(not(windows))]
+#[cfg(target_os = "linux")]
+mod x11;
+#[cfg(target_os = "linux")]
+pub use x11::sources;
+#[cfg(target_os = "linux")]
+pub(super) use x11::start;
+
+/// Whether this session can share its screen: always on Windows; on Linux
+/// only under X11 (Wayland needs the desktop portal, not done yet).
+pub fn supported() -> bool {
+    #[cfg(windows)]
+    return true;
+    #[cfg(target_os = "linux")]
+    return x11::session_supported();
+    #[cfg(not(any(windows, target_os = "linux")))]
+    return false;
+}
+
+/// No capture on this platform: nothing to share.
+#[cfg(not(any(windows, target_os = "linux")))]
 pub fn sources() -> Vec<super::Source> {
     Vec::new()
 }
 
-#[cfg(not(windows))]
+#[cfg(not(any(windows, target_os = "linux")))]
 pub(super) fn start(_source: super::SourceId, _sink: FrameSink) -> Result<Box<dyn Capture>, String> {
-    Err("screen sharing is currently only available on Windows".into())
+    Err("screen sharing is not available on this platform".into())
 }
 
 /// A running capture. Dropping it stops capturing.
@@ -68,8 +86,8 @@ pub(super) struct FrameSink {
     max_height: u32,
 }
 
-// Only used by capture backends, so far only on Windows.
-#[cfg_attr(not(windows), allow(dead_code))]
+// Only used by capture backends.
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 impl FrameSink {
     pub(super) fn new(
         out: SyncSender<Captured>,

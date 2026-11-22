@@ -9,9 +9,9 @@
 //! decoding, handing the picture to the UI. The server only forwards
 //! fragments to subscribed viewers.
 //!
-//! Watching works on every platform. Sharing is only implemented on
-//! Windows so far: elsewhere [`CAN_SHARE`] is `false` and the share
-//! buttons are disabled.
+//! Watching works on every platform. Sharing works on Windows and on Linux
+//! under X11 ([`can_share`]); the share's audio only on Windows so far
+//! ([`CAN_SHARE_AUDIO`]).
 
 use std::sync::Mutex;
 use std::sync::atomic::{AtomicBool, AtomicU32, AtomicU64, Ordering};
@@ -30,8 +30,14 @@ pub use preview::{Preview, PreviewMode};
 pub use share::Sharer;
 pub use view::{Frame, Viewer, YuvFrame};
 
-/// Whether this platform can share its screen. Watching is always available.
-pub const CAN_SHARE: bool = cfg!(windows);
+/// Whether this session can share its screen: Windows, or Linux under X11.
+/// Watching is always available.
+pub fn can_share() -> bool {
+    capture::supported()
+}
+
+/// Whether the share's audio can go with the video (Windows only so far).
+pub const CAN_SHARE_AUDIO: bool = cfg!(windows);
 
 #[derive(Clone, Copy, PartialEq, Eq, Debug, serde::Serialize, serde::Deserialize)]
 pub enum Quality {
@@ -79,7 +85,7 @@ impl Quality {
 
 /// What to share: a monitor by index or a window by its handle. Only
 /// platforms that can share list sources; elsewhere none is ever made.
-#[cfg_attr(not(windows), allow(dead_code))]
+#[cfg_attr(not(any(windows, target_os = "linux")), allow(dead_code))]
 #[derive(Clone, Copy, PartialEq, Eq, Debug)]
 pub enum SourceId {
     Monitor(usize),

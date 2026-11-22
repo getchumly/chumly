@@ -61,6 +61,11 @@ windows-capture = "2.0.1"
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [target."cfg(target_os = \"linux\")".dependencies]
+# Screen capture under X11 (screen/capture/x11.rs): pure-Rust X protocol (already
+# used by winit), shared memory frames, monitors, the pointer, covered windows.
+x11rb = { version = "0.13", features = ["shm", "randr", "xfixes", "composite"] }
+# System V shared memory for the X11 frames.
+libc = "0.2"
 # Self-update: the Linux release is a .tar.gz with the executable inside.
 flate2 = "1"
 tar = "0.4"

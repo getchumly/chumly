@@ -169,7 +169,7 @@ impl App {
         } else {
             let share =
                 Button::secondary(t.share_screen).with_icon(icons::SCREENCAST).width(width).font_size(ME_BUTTON_FONT);
-            let resp = ui.add_enabled(screen::CAN_SHARE, share);
+            let resp = ui.add_enabled(screen::can_share(), share);
             if resp.on_disabled_hover_text(t.share_unsupported).clicked() {
                 actions.push(Action::OpenShare);
             }

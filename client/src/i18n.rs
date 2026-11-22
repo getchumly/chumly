@@ -374,7 +374,7 @@ strings! {
     share_quality => "Качество", "Quality";
     share_start => "Начать", "Start";
     share_note => "Видео сжимает процессор: чем выше качество, тем больше нагрузка.", "Video is encoded on the CPU: higher quality means more load.";
-    share_unsupported => "Демонстрация экрана пока доступна только на Windows", "Screen sharing is only available on Windows for now";
+    share_unsupported => "Показ экрана пока работает на Windows и на Linux с X11 (Wayland — позже)", "Screen sharing works on Windows and on Linux with X11 for now (Wayland later)";
     share_ended => "Демонстрация завершена", "Screen sharing ended";
     share_failed => "Не удалось начать демонстрацию: {err}", "Could not start screen sharing: {err}";
     sharing_now => "Вы показываете экран", "You are sharing your screen";
@@ -405,6 +405,7 @@ strings! {
     waiting_keyframe => "ждём ключевой кадр", "waiting for keyframe";
     share_audio => "Транслировать звук", "Share audio";
     share_audio_tip => "Окно: звук только этой программы. Экран: весь звук, кроме Chumly.", "Window: only that app's sound. Screen: all sound except Chumly.";
+    share_audio_unavailable => "Звук трансляции пока есть только на Windows: на этой системе показывается только изображение.", "Stream audio is Windows only for now: on this system only the picture is shared.";
     share_audio_failed => "Звук демонстрации не запустился: {err}", "Stream audio failed to start: {err}";
     stream_volume => "Громкость демонстрации", "Stream volume";
     hotkeys => "Горячие клавиши", "Hotkeys";

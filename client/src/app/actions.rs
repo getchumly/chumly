@@ -273,7 +273,7 @@ impl App {
                 self.input.clear();
             }
             Action::OpenShare => {
-                if !screen::CAN_SHARE {
+                if !screen::can_share() {
                     self.toast_err(t.share_unsupported);
                     return;
                 }
