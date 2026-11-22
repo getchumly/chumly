@@ -1,7 +1,6 @@
 //! Watching a screen share, on every platform: reassembling frames from
 //! fragments, OpenH264 decoding, handing the picture to the UI.
 
-use std::collections::HashMap;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc::Receiver;
 use std::sync::{Arc, Mutex};
@@ -13,6 +12,7 @@ use openh264::formats::YUVSource;
 use shared::ClientMsg;
 use shared::media::ScreenFragment;
 
+use super::packet::Assembler;
 use super::{Counters, ScreenShared, Timing};
 use crate::net::NetCommand;
 
@@ -140,64 +140,6 @@ impl Drop for Viewer {
     }
 }
 
-/// Reassembles frames from fragments. Fragments may arrive out of order
-/// or get lost: then the frame never completes and is discarded.
-#[derive(Default)]
-pub(super) struct Assembler {
-    partial: HashMap<u32, Partial>,
-    /// Last completed frame: anything older is no longer needed.
-    newest: Option<u32>,
-}
-
-struct Partial {
-    keyframe: bool,
-    parts: Vec<Option<Vec<u8>>>,
-    received: usize,
-}
-
-pub(super) struct Assembled {
-    pub(super) frame_id: u32,
-    pub(super) keyframe: bool,
-    pub(super) data: Vec<u8>,
-}
-
-/// `a` is newer than `b`, accounting for counter wraparound.
-fn newer(a: u32, b: u32) -> bool {
-    a != b && a.wrapping_sub(b) < u32::MAX / 2
-}
-
-impl Assembler {
-    pub(super) fn push(&mut self, f: ScreenFragment<'_>) -> Option<Assembled> {
-        if self.newest.is_some_and(|n| !newer(f.frame_id, n)) {
-            return None;
-        }
-        let p = self.partial.entry(f.frame_id).or_insert_with(|| Partial {
-            keyframe: f.keyframe,
-            parts: vec![None; f.count as usize],
-            received: 0,
-        });
-        let slot = p.parts.get_mut(f.index as usize)?;
-        if slot.is_none() {
-            *slot = Some(f.data.to_vec());
-            p.received += 1;
-        }
-        if p.received < p.parts.len() {
-            // Do not accumulate incomplete frames: keep only the last 8.
-            if self.partial.len() > 16 {
-                let id = f.frame_id;
-                self.partial.retain(|k, _| !newer(id, *k) || id.wrapping_sub(*k) < 8);
-            }
-            return None;
-        }
-        let p = self.partial.remove(&f.frame_id)?;
-        self.newest = Some(f.frame_id);
-        let id = f.frame_id;
-        self.partial.retain(|k, _| newer(*k, id));
-        let data = p.parts.into_iter().flatten().flatten().collect();
-        Some(Assembled { frame_id: id, keyframe: p.keyframe, data })
-    }
-}
-
 /// Where the decoder thread puts its frames, and how.
 struct Output {
     slot: Arc<Mutex<Option<Frame>>>,
@@ -291,31 +233,15 @@ mod tests {
     use openh264::OpenH264API;
     use openh264::encoder::Encoder;
     use openh264::formats::{BgraSliceU8, YUVBuffer};
-    use shared::media::SCREEN_FRAGMENT_DATA;
 
-    use super::super::{Quality, encoder_config};
+    use super::super::Quality;
+    use super::super::encode::encoder_config;
+    use super::super::packet::split;
     use super::*;
 
-    fn frag(frame_id: u32, index: u16, count: u16, data: &[u8]) -> ScreenFragment<'_> {
-        ScreenFragment { frame_id, index, count, keyframe: index == 0 && frame_id == 0, data }
-    }
-
-    #[test]
-    fn assembles_out_of_order_and_drops_stale() {
-        let mut a = Assembler::default();
-        assert!(a.push(frag(0, 1, 2, b"cd")).is_none());
-        let f = a.push(frag(0, 0, 2, b"ab")).unwrap();
-        assert_eq!((f.frame_id, f.data.as_slice()), (0, &b"abcd"[..]));
-        // Frame 1 lost a fragment, frame 2 completed: frame 1 is discarded.
-        assert!(a.push(frag(1, 0, 2, b"x")).is_none());
-        assert_eq!(a.push(frag(2, 0, 1, b"y")).unwrap().frame_id, 2);
-        assert!(a.push(frag(1, 1, 2, b"z")).is_none());
-        assert!(a.partial.is_empty());
-    }
-
-    /// The sharer's exact encoder settings (as on Windows), through
-    /// fragments and reassembly, into the viewer's decoder. Runs on every
-    /// platform: this is what a Linux viewer gets from a Windows sharer.
+    /// The sharer's exact encoder settings and fragmenting, through
+    /// reassembly, into the viewer's decoder. Runs on every platform: this
+    /// is what a Linux viewer gets from a Windows sharer.
     #[test]
     fn sharer_stream_decodes() {
         let (w, h) = (1280usize, 720usize);
@@ -331,17 +257,9 @@ mod tests {
                 (0..w * h).flat_map(|i| [(i % w) as u8, (i / w) as u8, (frame_id * 20) as u8, 255]).collect();
             yuv.read_bgra8(BgraSliceU8::new(&bgra, (w, h)));
             let stream = enc.encode(&yuv).unwrap();
-            let keyframe = frame_id == 0;
             let data = stream.to_vec();
-            let count = data.len().div_ceil(SCREEN_FRAGMENT_DATA) as u16;
             // Fragments go through their wire encoding and arrive in reverse order.
-            let wire: Vec<Vec<u8>> = data
-                .chunks(SCREEN_FRAGMENT_DATA)
-                .enumerate()
-                .map(|(index, chunk)| {
-                    ScreenFragment { frame_id, index: index as u16, count, keyframe, data: chunk }.encode()
-                })
-                .collect();
+            let wire: Vec<Vec<u8>> = split(frame_id, frame_id == 0, &data).unwrap().collect();
             let mut assembled = None;
             for p in wire.iter().rev() {
                 assembled = asm.push(ScreenFragment::decode(p).unwrap()).or(assembled);
