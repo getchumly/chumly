@@ -273,13 +273,16 @@ impl App {
                 self.input.clear();
             }
             Action::OpenShare => {
-                if !screen::SUPPORTED {
+                if !screen::can_share() {
                     self.toast_err(t.share_unsupported);
                     return;
                 }
+                let sources = screen::sources();
+                // A single entry (Wayland's "choose in the system dialog") is preselected.
+                let selected = if let [only] = sources.as_slice() { Some(only.id) } else { None };
                 self.screen.dialog = Some(ShareDialog {
-                    sources: screen::sources(),
-                    selected: None,
+                    sources,
+                    selected,
                     quality: self.cfg.share.quality,
                     audio: self.cfg.share.audio,
                 });
@@ -310,10 +313,6 @@ impl App {
             }
             Action::StopShare => self.stop_share(true),
             Action::Watch(user_id, name) => {
-                if !screen::SUPPORTED {
-                    self.toast_err(t.share_unsupported);
-                    return;
-                }
                 if self.screen.watching.as_ref().is_some_and(|w| w.user_id == user_id) {
                     return;
                 }
@@ -343,7 +342,9 @@ impl App {
                             user_id,
                             name,
                             viewer,
-                            texture: None,
+                            frame_size: None,
+                            fallback: None,
+                            stages: StageMeter::default(),
                             fullscreen: None,
                             fps: FpsMeter::new(),
                             builder,

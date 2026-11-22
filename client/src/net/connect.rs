@@ -13,7 +13,6 @@ use tokio::time::timeout;
 
 use super::tls::{self, ClientCert};
 use super::{ConnectParams, DisconnectReason};
-use crate::screen;
 
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -67,11 +66,8 @@ pub(super) async fn connect(p: &ConnectParams) -> Result<Session, ConnectError> 
         features: shared::feature_names(),
         nickname: p.nickname.clone(),
         password: p.password.clone(),
-        capabilities: if screen::SUPPORTED {
-            vec![MediaKind::Voice, MediaKind::Screen]
-        } else {
-            vec![MediaKind::Voice]
-        },
+        // `Screen` means "can watch screen shares": every platform can.
+        capabilities: vec![MediaKind::Voice, MediaKind::Screen],
     };
     write_msg(&mut send, &hello).await.map_err(|e| retry(&e))?;
     let first = timeout(CONNECT_TIMEOUT, read_msg::<_, ServerMsg>(&mut recv))

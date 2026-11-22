@@ -43,6 +43,10 @@ rcgen = "0.13"
 # Self-update: the release signature (minisign) and swapping the running executable.
 minisign-verify = "0.2"
 self-replace = "1"
+# H.264 for screen sharing: decoding on every platform, encoding where sharing works.
+openh264 = "0.9.9"
+# Downscaling captured frames (SIMD, single-threaded; see screen::scale_bgra).
+fast_image_resize = { version = "6.2", features = ["only_u8x4"] }
 
 [dev-dependencies]
 tempfile = "3"
@@ -51,13 +55,21 @@ tempfile = "3"
 winresource = "0.1"
 
 [target."cfg(windows)".dependencies]
-openh264 = "0.9.9"
 wasapi = "0.27.0"
 windows-capture = "2.0.1"
 # IsIconic: whether the shared window is minimized.
 windows-sys = { version = "0.61", features = ["Win32_Foundation", "Win32_UI_WindowsAndMessaging"] }
 
 [target."cfg(target_os = \"linux\")".dependencies]
+# Screen capture under X11 (screen/capture/x11.rs): pure-Rust X protocol (already
+# used by winit), shared memory frames, monitors, the pointer, covered windows.
+x11rb = { version = "0.13", features = ["shm", "randr", "xfixes", "composite"] }
+# System V shared memory for the X11 frames.
+libc = "0.2"
+# Screen capture under Wayland (screen/capture/portal.rs): the desktop portal's
+# ScreenCast over D-Bus (0.13: same zbus 5 as accesskit), then a PipeWire stream.
+ashpd = { version = "0.13.4", default-features = false, features = ["tokio", "screencast"] }
+pipewire = "0.10"
 # Self-update: the Linux release is a .tar.gz with the executable inside.
 flate2 = "1"
 tar = "0.4"

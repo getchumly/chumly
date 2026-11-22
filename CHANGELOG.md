@@ -11,6 +11,33 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+**Update:** client only (servers can stay). Linux users: the client now needs PipeWire
+(`libpipewire-0.3`), which desktop systems normally have.
+
+### Added
+- Client: **screen sharing on Linux.** With X11 (Linux Mint, Ubuntu on Xorg and similar):
+  a monitor or a window, with the mouse pointer; a covered window is still shared. With
+  Wayland (Ubuntu, Fedora, KDE): the system dialog asks what to share. No sound yet
+  (Windows only for now).
+- Client: **watching screen shares on Linux**, with their sound. Works with servers of any
+  version.
+
+### Changed
+- Client: watching a screen share takes less CPU: the picture's colors are now converted by
+  the graphics card, and 2.5 times less data goes to it per frame. If the graphics card
+  cannot do this (very old OpenGL), the client converts on the CPU as before. Hovering the
+  stats in the viewer window shows the time per frame of each stage.
+
+### Fixed
+- Client: screen sharing no longer makes the sharer's memory grow. Every share from a
+  high-resolution monitor (e.g. 2560×1440) used to keep about 80 MB that was never given
+  back, so starting and stopping a share several times pushed the client to 1 GB and more.
+  Frames are also downscaled with less work: the sharer's CPU load dropped by about a fifth.
+
+### Security
+- Client: updated the `url` library (RUSTSEC-2026-0592, a crash on crafted `blob:` links;
+  the client only uses it to open links in the browser).
+
 ## [0.1.2] - 2026-11-21
 
 **Update:** client only (servers can stay). This is the last update you install by hand:

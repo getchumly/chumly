@@ -38,7 +38,9 @@ jobs:
         if: matrix.pkg == 'client' && runner.os == 'Linux'
         run: |
           sudo apt-get update
-          sudo apt-get install -y cmake libasound2-dev libx11-dev libxkbcommon-dev libwayland-dev
+          sudo apt-get install -y cmake libasound2-dev libx11-dev libxkbcommon-dev libwayland-dev libpipewire-0.3-0 libclang-dev
+          # PipeWire 1.x headers, linked against 22.04's own library (see the script).
+          bash .github/scripts/pipewire-headers.sh
 
       - name: Build
         shell: bash

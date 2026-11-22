@@ -32,6 +32,7 @@ use crate::i18n::{Tr, fill, tr};
 use crate::identity::Identity;
 use crate::net::{self, ConnectParams, DisconnectReason, NetCommand, NetEvent, VoiceOut};
 use crate::ptt::PttWatcher;
+use crate::screen::Frame;
 use crate::screen::{self, Preview, PreviewMode, Quality, ScreenShared, Sharer, Source, SourceId, Viewer};
 use crate::theme::ToastKind;
 
@@ -64,6 +65,7 @@ mod updates_ui;
 mod user_menu;
 mod viewers;
 mod window_frame;
+mod yuv_video;
 
 use actions::*;
 use admin_panel::*;
@@ -317,6 +319,7 @@ impl App {
         // The viewer window closes by itself once it is no longer drawn.
         if self.screen.watching.take().is_some() {
             lock_mixer(&self.audio.mixer).clear_stream();
+            self.screen.video.clear();
             if self.session.is_some() {
                 self.send(ClientMsg::WatchStream { user_id: None });
             }

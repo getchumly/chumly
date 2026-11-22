@@ -169,7 +169,7 @@ impl App {
         } else {
             let share =
                 Button::secondary(t.share_screen).with_icon(icons::SCREENCAST).width(width).font_size(ME_BUTTON_FONT);
-            let resp = ui.add_enabled(screen::SUPPORTED, share);
+            let resp = ui.add_enabled(screen::can_share(), share);
             if resp.on_disabled_hover_text(t.share_unsupported).clicked() {
                 actions.push(Action::OpenShare);
             }
@@ -530,8 +530,7 @@ fn live_badge(
     ui.painter().galley(badge.center() - g.size() / 2.0, g, Color32::PLACEHOLDER);
     let mut clicked = false;
     if !is_me {
-        let live_tip = viewers::live_tip(t, &u.nickname, viewers);
-        let tip = if screen::SUPPORTED { live_tip.as_str() } else { t.share_unsupported };
+        let tip = viewers::live_tip(t, &u.nickname, viewers);
         let b = ui.interact(badge, egui::Id::unique(("live", u.id)), Sense::click()).on_hover_text(tip);
         if b.hovered() {
             ui.ctx().set_cursor_icon(egui::CursorIcon::PointingHand);
