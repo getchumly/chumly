@@ -13,7 +13,7 @@ use openh264::encoder::{Encoder, EncoderConfig, FrameType};
 use openh264::formats::{BgraSliceU8, YUVBuffer, YUVSource};
 use shared::media::MediaKind;
 
-use super::capture::Captured;
+use super::capture::{Captured, Pixels};
 use super::preview::{Preview, PreviewMode, THUMBNAIL_INTERVAL, preview_image};
 use super::{Counters, Quality, Timing, packet};
 
@@ -120,13 +120,22 @@ impl EncoderThread {
                 encoder.force_intra_frame();
             }
 
-            let buf = match &mut yuv {
-                Some(b) if b.dimensions() == (frame.width, frame.height) => b,
-                _ => yuv.insert(YUVBuffer::new(frame.width, frame.height)),
-            };
             let t = Instant::now();
-            buf.read_bgra8(BgraSliceU8::new(&frame.bgra, (frame.width, frame.height)));
-            let stream = encoder.encode(buf).map_err(|e| e.to_string())?;
+            let (width, height) = (frame.width, frame.height);
+            let stream = match &frame.pixels {
+                Pixels::Bgra(bgra) => {
+                    let buf = match &mut yuv {
+                        Some(b) if b.dimensions() == (width, height) => b,
+                        _ => yuv.insert(YUVBuffer::new(width, height)),
+                    };
+                    buf.read_bgra8(BgraSliceU8::new(bgra, (width, height)));
+                    encoder.encode(buf)
+                }
+                // Windows only: prepared on the GPU, already in the encoder's format.
+                #[cfg(windows)]
+                Pixels::I420(data) => encoder.encode(&super::capture::I420Frame { data, width, height }),
+            }
+            .map_err(|e| e.to_string())?;
             let timing = &self.counters.timing;
             let us = Timing::add(&timing.encode_us, t);
             timing.encode_max_us.fetch_max(us, Ordering::Relaxed);
@@ -166,7 +175,13 @@ impl EncoderThread {
         }
         st.at = Some(Instant::now());
         st.stale = false;
-        self.preview.put(preview_image(&frame.bgra, frame.width, frame.height, mode));
+        let (w, h) = (frame.width, frame.height);
+        let image = match &frame.pixels {
+            Pixels::Bgra(bgra) => preview_image(bgra, w, h, mode),
+            #[cfg(windows)]
+            Pixels::I420(data) => preview_image(&super::capture::i420_to_bgra(data, w, h), w, h, mode),
+        };
+        self.preview.put(image);
         self.ctx.request_repaint_of(egui::ViewportId::ROOT);
         self.ctx.request_repaint_of(self.preview.window());
     }

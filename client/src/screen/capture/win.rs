@@ -12,7 +12,8 @@ use windows_capture::settings::{
 };
 use windows_capture::window::Window;
 
-use super::{Capture, FrameSink};
+use super::gpu::{self, GpuPrep};
+use super::{Capture, Captured, FrameSink, Pixels};
 use crate::screen::{Source, SourceId};
 
 /// Monitors and windows available for sharing.
@@ -44,6 +45,30 @@ pub fn sources() -> Vec<Source> {
 struct Handler {
     sink: FrameSink,
     last: Option<Instant>,
+    /// Frames are prepared on the GPU while this works; after an error, or
+    /// with `CHUMLY_SCREEN_CPU=1` set, on the CPU like on other platforms.
+    gpu: Option<GpuPrep>,
+    use_gpu: bool,
+}
+
+impl Handler {
+    /// Downscales and converts the frame on the GPU; only the result is
+    /// read back.
+    fn prepare_on_gpu(&mut self, frame: &Frame) -> Result<Captured, String> {
+        let desc = *frame.desc();
+        if !gpu::supported_format(desc.Format) {
+            return Err(format!("unsupported texture format {:?}", desc.Format));
+        }
+        let prep = match &mut self.gpu {
+            Some(p) => p,
+            None => self.gpu.insert(GpuPrep::new(frame.device(), frame.device_context())?),
+        };
+        let (dw, dh) = self.sink.target_size(desc.Width, desc.Height);
+        let mut i420 = Vec::new();
+        let (src, dst) = ((desc.Width, desc.Height), (dw, dh));
+        prep.convert(frame.device_context(), frame.as_raw_texture(), desc.Format, src, dst, &mut i420)?;
+        Ok(Captured { width: dw as usize, height: dh as usize, pixels: Pixels::I420(i420) })
+    }
 }
 
 impl GraphicsCaptureApiHandler for Handler {
@@ -51,7 +76,8 @@ impl GraphicsCaptureApiHandler for Handler {
     type Error = String;
 
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
-        Ok(Self { sink: ctx.flags, last: None })
+        let use_gpu = std::env::var_os("CHUMLY_SCREEN_CPU").is_none();
+        Ok(Self { sink: ctx.flags, last: None, gpu: None, use_gpu })
     }
 
     fn on_frame_arrived(&mut self, frame: &mut Frame, _control: InternalCaptureControl) -> Result<(), Self::Error> {
@@ -59,6 +85,16 @@ impl GraphicsCaptureApiHandler for Handler {
             return Ok(());
         }
         let t = Instant::now();
+        if self.use_gpu {
+            match self.prepare_on_gpu(frame) {
+                Ok(prepared) => return self.sink.push_prepared(prepared, t),
+                Err(e) => {
+                    tracing::warn!("preparing frames on the GPU failed, using the CPU: {e}");
+                    self.use_gpu = false;
+                    self.gpu = None;
+                }
+            }
+        }
         let mut buf = frame.buffer().map_err(|e| e.to_string())?;
         let (sw, sh, pitch) = (buf.width(), buf.height(), buf.row_pitch() as usize);
         self.sink.push(buf.as_raw_buffer(), sw, sh, pitch, t)

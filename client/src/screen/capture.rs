@@ -17,6 +17,10 @@ use super::scale::{scale_bgra, target_size};
 use super::{Counters, Quality, Timing};
 
 #[cfg(windows)]
+mod gpu;
+#[cfg(windows)]
+pub(super) use gpu::{I420Frame, i420_to_bgra};
+#[cfg(windows)]
 mod win;
 #[cfg(windows)]
 pub use win::sources;
@@ -77,11 +81,22 @@ pub(super) trait Capture {
     fn audio_process(&self) -> Option<u32>;
 }
 
-/// A captured frame at the stream's size: tightly packed BGRA.
+/// A captured frame at the stream's size.
 pub(super) struct Captured {
     pub(super) width: usize,
     pub(super) height: usize,
-    pub(super) bgra: Vec<u8>,
+    pub(super) pixels: Pixels,
+}
+
+/// The pixels of a [`Captured`] frame, tightly packed.
+pub(super) enum Pixels {
+    /// Downscaled on the CPU.
+    Bgra(Vec<u8>),
+    /// Windows only: downscaled and converted on the GPU (`capture/gpu.rs`):
+    /// the Y plane, then U, then V, the encoder's own format. Does not exist
+    /// in other builds, so their path is untouched by it.
+    #[cfg(windows)]
+    I420(Vec<u8>),
 }
 
 /// Where a capture backend puts its frames.
@@ -149,8 +164,26 @@ impl FrameSink {
         let bgra = scale_bgra(raw, sw as usize, sh as usize, pitch, dw as usize, dh as usize);
         Timing::add(&timing.scale_us, t);
         self.pending.store(true, Ordering::Relaxed);
-        let captured = Captured { width: dw as usize, height: dh as usize, bgra };
-        match self.out.try_send(captured) {
+        self.send(Captured { width: dw as usize, height: dh as usize, pixels: Pixels::Bgra(bgra) })
+    }
+
+    /// The stream's frame size for a `sw` × `sh` source.
+    #[cfg(windows)]
+    pub(super) fn target_size(&self, sw: u32, sh: u32) -> (u32, u32) {
+        target_size(sw, sh, self.max_height)
+    }
+
+    /// Hands the encoder a frame already prepared at the stream's size (on
+    /// the GPU). `started`: when the backend began preparing it.
+    #[cfg(windows)]
+    pub(super) fn push_prepared(&self, frame: Captured, started: Instant) -> Result<(), String> {
+        Timing::add(&self.counters.timing.copy_us, started);
+        self.pending.store(true, Ordering::Relaxed);
+        self.send(frame)
+    }
+
+    fn send(&self, frame: Captured) -> Result<(), String> {
+        match self.out.try_send(frame) {
             Ok(()) | Err(TrySendError::Full(_)) => Ok(()),
             Err(TrySendError::Disconnected(_)) => Err("encoder stopped".into()),
         }

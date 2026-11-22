@@ -188,16 +188,22 @@ mod tests {
         let sharer =
             Sharer::start(SourceId::Monitor(1), quality, false, tx, Default::default(), egui::Context::default())
                 .unwrap();
+        // CHUMLY_TEST_NODECODE=1: only the sharer runs, so the process CPU is its cost.
+        let decode = std::env::var("CHUMLY_TEST_NODECODE").is_err();
         let mut asm = Assembler::default();
         let mut dec = Decoder::new().unwrap();
         let (mut decoded, mut dec_us) = (0u64, 0u64);
+        // Skip the first second: capture start-up.
+        std::thread::sleep(Duration::from_secs(1));
+        while rx.try_recv().is_ok() {}
+        let cpu_start = process_cpu();
         let start = Instant::now();
         while start.elapsed() < Duration::from_secs(secs) {
             let Ok((_, p)) = rx.try_recv() else {
                 std::thread::sleep(Duration::from_millis(1));
                 continue;
             };
-            if let Some(f) = asm.push(ScreenFragment::decode(&p).unwrap()) {
+            if decode && let Some(f) = asm.push(ScreenFragment::decode(&p).unwrap()) {
                 let t = Instant::now();
                 if let Ok(Some(_)) = dec.decode(&f.data) {
                     dec_us += t.elapsed().as_micros() as u64;
@@ -206,6 +212,8 @@ mod tests {
             }
         }
         let el = start.elapsed().as_secs_f64();
+        let cpu = (process_cpu() - cpu_start).as_secs_f64();
+        let cores = std::thread::available_parallelism().map_or(1, |n| n.get()) as f64;
         let c = sharer.counters();
         let tm = &c.timing;
         let ld = |a: &std::sync::atomic::AtomicU64| a.load(Ordering::Relaxed);
@@ -213,7 +221,8 @@ mod tests {
         let busy = ld(&tm.busy);
         let taken = (captured - busy).max(1);
         let enc = ld(&tm.encoded).max(1);
-        println!("{} in {el:.1} s", quality.label());
+        println!("{} in {el:.1} s, source {}", quality.label(), monitor_size(1));
+        println!("  process CPU {:.1}% of all cores ({:.0}% of one)", cpu / el / cores * 100.0, cpu / el * 100.0);
         println!("  from Windows: {:.1} fps, skipped (encoder busy): {busy}", captured as f64 / el);
         println!(
             "  copy {:.1} ms, downscale {:.1} ms per frame",
@@ -237,5 +246,22 @@ mod tests {
             decoded as f64 / el,
             dec_us as f64 / decoded.max(1) as f64 / 1000.0
         );
+    }
+
+    /// CPU time this process has used, all threads.
+    fn process_cpu() -> Duration {
+        use windows::Win32::Foundation::FILETIME;
+        use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessTimes};
+        let (mut c, mut e, mut k, mut u) =
+            (FILETIME::default(), FILETIME::default(), FILETIME::default(), FILETIME::default());
+        // SAFETY: plain out-parameters for the current process.
+        unsafe { GetProcessTimes(GetCurrentProcess(), &mut c, &mut e, &mut k, &mut u) }.unwrap();
+        let t = |f: FILETIME| (f.dwHighDateTime as u64) << 32 | f.dwLowDateTime as u64;
+        Duration::from_nanos((t(k) + t(u)) * 100)
+    }
+
+    fn monitor_size(index: usize) -> String {
+        let m = windows_capture::monitor::Monitor::from_index(index).unwrap();
+        format!("{}×{}", m.width().unwrap_or(0), m.height().unwrap_or(0))
     }
 }

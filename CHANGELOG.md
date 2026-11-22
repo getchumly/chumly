@@ -11,6 +11,13 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+### Changed
+- Client (Windows): **screen sharing uses less CPU.** Captured frames are now downscaled and
+  converted for the encoder on the graphics card, so only the finished frame is read back.
+  On a 2560×1440 monitor at 1080p 60 the sharer's CPU went down by about 8% per frame, and
+  more frames get through when the encoder is busy. If the graphics card cannot do it, the
+  client falls back to the previous path on its own. Linux is unchanged.
+
 ## [0.3.0] - 2026-11-22
 
 **Update:** client only (servers can stay).
