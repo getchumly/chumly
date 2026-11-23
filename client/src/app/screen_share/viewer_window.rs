@@ -252,7 +252,13 @@ fn draw(ui: &mut egui::Ui, st: &mut WindowState) {
             own_texture = c.texture.lock().unwrap_or_else(|e| e.into_inner()).clone();
             let stats = stream_stats(t, c.fps.fps, c.counters.lost.load(Ordering::Relaxed));
             let video = own_texture.as_ref().map(Video::Texture);
-            (t.preview_title, video, stats, None, false, WindowKind::Own { minimized: c.minimized })
+            // Windows: which encoder runs (the graphics card's or OpenH264).
+            #[cfg(windows)]
+            let hover =
+                Some(c.counters.encoder()).filter(|e| !e.is_empty()).map(|e| fill(t.stream_encoder, &[("enc", &e)]));
+            #[cfg(not(windows))]
+            let hover = None;
+            (t.preview_title, video, stats, hover, false, WindowKind::Own { minimized: c.minimized })
         }
     };
 

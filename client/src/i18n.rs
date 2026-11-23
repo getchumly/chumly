@@ -4,9 +4,10 @@
 
 use crate::config::Language;
 
+// `#[cfg_attr(not(windows), allow(dead_code))]` before a key marks a string used only on Windows.
 macro_rules! strings {
-    ($($key:ident => $ru:expr, $en:expr;)*) => {
-        pub struct Tr { $(pub $key: &'static str,)* }
+    ($($(#[$attr:meta])* $key:ident => $ru:expr, $en:expr;)*) => {
+        pub struct Tr { $($(#[$attr])* pub $key: &'static str,)* }
         pub const RU: Tr = Tr { $($key: $ru,)* };
         pub const EN: Tr = Tr { $($key: $en,)* };
         #[cfg(test)]
@@ -376,6 +377,11 @@ strings! {
     share_quality => "Качество", "Quality";
     share_start => "Начать", "Start";
     share_note => "Видео сжимает процессор: чем выше качество, тем больше нагрузка.", "Video is encoded on the CPU: higher quality means more load.";
+    share_note_hw => "Видео сжимает видеокарта, а если она не умеет — процессор.", "Video is encoded on the graphics card, or on the CPU if the card cannot.";
+    #[cfg_attr(not(windows), allow(dead_code))]
+    share_hardware => "Аппаратное ускорение", "Hardware acceleration";
+    #[cfg_attr(not(windows), allow(dead_code))]
+    share_hardware_tip => "Видеокарта уменьшает и сжимает видео, процессор почти не занят. Выключите, если у зрителей артефакты или неверные цвета.", "The graphics card scales and encodes the video, so the CPU stays almost idle. Turn off if viewers see artifacts or wrong colors.";
     share_unsupported => "Показ экрана пока работает на Windows и на Linux с X11 (Wayland — позже)", "Screen sharing works on Windows and on Linux with X11 for now (Wayland later)";
     share_ended => "Демонстрация завершена", "Screen sharing ended";
     share_failed => "Не удалось начать демонстрацию: {err}", "Could not start screen sharing: {err}";
@@ -402,6 +408,8 @@ strings! {
     fullscreen => "На весь экран", "Fullscreen";
     stream_stats => "{fps} кадр/с · потеряно кадров: {lost}", "{fps} fps · frames lost: {lost}";
     stream_timing => "На кадр: декодирование {dec} мс · подготовка {copy} мс · вывод {show} мс ({mode})", "Per frame: decoding {dec} ms · preparing {copy} ms · display {show} ms ({mode})";
+    #[cfg_attr(not(windows), allow(dead_code))]
+    stream_encoder => "Кодер: {enc}", "Encoder: {enc}";
     video_gpu => "цвет на видеокарте", "colors on the GPU";
     video_cpu => "цвет на процессоре", "colors on the CPU";
     waiting_keyframe => "ждём ключевой кадр", "waiting for keyframe";

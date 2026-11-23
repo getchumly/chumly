@@ -61,7 +61,7 @@ impl GpuPrep {
     }
 
     /// Downscales `texture` (BGRA, `src` = its width and height) to `dst` and
-    /// returns it as tightly packed I420: the Y plane, then U, then V.
+    /// returns it as tightly packed NV12: the Y plane, then interleaved U and V.
     pub(super) fn convert(
         &mut self,
         context: &ID3D11DeviceContext,
@@ -97,7 +97,7 @@ impl GpuPrep {
             let (w, h) = (dst.0 as usize, dst.1 as usize);
             // NV12: the Y rows, then the interleaved UV rows, `pitch` apart.
             let data = std::slice::from_raw_parts(mapped.pData as *const u8, pitch * h * 3 / 2);
-            nv12_to_i420(data, pitch, w, h, out);
+            strip_pitch(data, pitch, w, h, out);
             context.Unmap(&p.staging, 0);
         }
         Ok(())
@@ -214,27 +214,30 @@ pub(super) fn supported_format(format: DXGI_FORMAT) -> bool {
     format == DXGI_FORMAT_B8G8R8A8_UNORM
 }
 
-/// NV12 (`pitch` bytes per row, both planes) → tightly packed I420.
-fn nv12_to_i420(nv12: &[u8], pitch: usize, w: usize, h: usize, out: &mut Vec<u8>) {
-    let (cw, ch) = (w / 2, h / 2);
+/// NV12 with rows `pitch` bytes apart (both planes) → tightly packed NV12.
+fn strip_pitch(nv12: &[u8], pitch: usize, w: usize, h: usize, out: &mut Vec<u8>) {
     out.clear();
-    out.reserve(w * h + 2 * cw * ch);
-    for row in nv12[..pitch * h].chunks_exact(pitch) {
+    out.reserve(w * h * 3 / 2);
+    for row in nv12[..pitch * h * 3 / 2].chunks_exact(pitch) {
         out.extend_from_slice(&row[..w]);
-    }
-    let uv = &nv12[pitch * h..];
-    out.resize(w * h + 2 * cw * ch, 0);
-    let (u, v) = out[w * h..].split_at_mut(cw * ch);
-    for y in 0..ch {
-        let row = &uv[y * pitch..y * pitch + cw * 2];
-        for (x, pair) in row.as_chunks::<2>().0.iter().enumerate() {
-            u[y * cw + x] = pair[0];
-            v[y * cw + x] = pair[1];
-        }
     }
 }
 
-/// A tightly packed I420 frame (Y, then U, then V) as the encoder's input.
+/// Tightly packed NV12 → tightly packed I420 (Y, then U, then V), the
+/// software encoder's input.
+pub(in crate::screen) fn nv12_to_i420(nv12: &[u8], w: usize, h: usize, out: &mut Vec<u8>) {
+    let luma = w * h;
+    out.clear();
+    out.extend_from_slice(&nv12[..luma]);
+    out.resize(luma * 3 / 2, 0);
+    let (u, v) = out[luma..].split_at_mut(luma / 4);
+    for (i, pair) in nv12[luma..luma * 3 / 2].as_chunks::<2>().0.iter().enumerate() {
+        u[i] = pair[0];
+        v[i] = pair[1];
+    }
+}
+
+/// A tightly packed I420 frame (Y, then U, then V) as the software encoder's input.
 pub(in crate::screen) struct I420Frame<'a> {
     pub(in crate::screen) data: &'a [u8],
     pub(in crate::screen) width: usize,
@@ -265,16 +268,16 @@ impl YUVSource for I420Frame<'_> {
     }
 }
 
-/// A tightly packed I420 frame (`w` × `h`, both even) as BGRA, for the
+/// A tightly packed NV12 frame (`w` × `h`, both even) as BGRA, for the
 /// sharer's own preview.
-pub(in crate::screen) fn i420_to_bgra(i420: &[u8], w: usize, h: usize) -> Vec<u8> {
-    let (y_plane, chroma) = i420.split_at(w * h);
-    let (u, v) = chroma.split_at(w * h / 4);
+pub(in crate::screen) fn nv12_to_bgra(nv12: &[u8], w: usize, h: usize) -> Vec<u8> {
+    let (y_plane, uv) = nv12.split_at(w * h);
     let mut out = Vec::with_capacity(w * h * 4);
     for (row, ys) in y_plane.chunks_exact(w).enumerate() {
-        let c = (row / 2) * (w / 2);
+        let c = (row / 2) * w;
         for (x, &y) in ys.iter().enumerate() {
-            let [r, g, b] = crate::screen::view::bt601(y, u[c + x / 2], v[c + x / 2]);
+            let i = c + (x & !1);
+            let [r, g, b] = crate::screen::view::bt601(y, uv[i], uv[i + 1]);
             out.extend_from_slice(&[b, g, r, 255]);
         }
     }
@@ -292,10 +295,10 @@ mod tests {
     use super::*;
 
     #[test]
-    fn i420_preview_matches_colours() {
+    fn nv12_preview_matches_colours() {
         // 4x2: left half limited-range black, right half white; chroma neutral.
-        let i420 = [16, 16, 235, 235, 16, 16, 235, 235, 128, 128, 128, 128];
-        let bgra = i420_to_bgra(&i420, 4, 2);
+        let nv12 = [16, 16, 235, 235, 16, 16, 235, 235, 128, 128, 128, 128];
+        let bgra = nv12_to_bgra(&nv12, 4, 2);
         assert_eq!(bgra.len(), 4 * 2 * 4);
         for (i, px) in bgra.chunks(4).enumerate() {
             let want = if i % 4 < 2 { 0 } else { 255 };
@@ -304,12 +307,15 @@ mod tests {
     }
 
     #[test]
-    fn nv12_splits_into_planes() {
+    fn nv12_padding_and_planes() {
         // 4x2 frame, rows padded to 6 bytes.
-        let nv12 = [1, 2, 3, 4, 0, 0, 5, 6, 7, 8, 0, 0, 10, 20, 11, 21, 0, 0];
-        let mut out = Vec::new();
-        nv12_to_i420(&nv12, 6, 4, 2, &mut out);
-        assert_eq!(out, [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]);
+        let padded = [1, 2, 3, 4, 0, 0, 5, 6, 7, 8, 0, 0, 10, 20, 11, 21, 0, 0];
+        let mut nv12 = Vec::new();
+        strip_pitch(&padded, 6, 4, 2, &mut nv12);
+        assert_eq!(nv12, [1, 2, 3, 4, 5, 6, 7, 8, 10, 20, 11, 21]);
+        let mut i420 = Vec::new();
+        nv12_to_i420(&nv12, 4, 2, &mut i420);
+        assert_eq!(i420, [1, 2, 3, 4, 5, 6, 7, 8, 10, 11, 20, 21]);
     }
 
     /// The GPU conversion gives the same colours as OpenH264's own (the CPU
@@ -380,17 +386,19 @@ mod tests {
         let tex = tex.unwrap();
 
         let (dw, dh) = (sw / 2, sh / 2);
-        let mut i420 = Vec::new();
+        let mut nv12 = Vec::new();
         prep.convert(
             &context,
             &tex,
             DXGI_FORMAT_B8G8R8A8_UNORM,
             (sw as u32, sh as u32),
             (dw as u32, dh as u32),
-            &mut i420,
+            &mut nv12,
         )
         .unwrap();
-        assert_eq!(i420.len(), dw * dh * 3 / 2);
+        assert_eq!(nv12.len(), dw * dh * 3 / 2);
+        let mut i420 = Vec::new();
+        nv12_to_i420(&nv12, dw, dh, &mut i420);
 
         // Reference: OpenH264's conversion of the same picture at the target size.
         let small: Vec<u8> = (0..dh).flat_map(|_| (0..dw).flat_map(|x| colors[x * 2 / band])).collect();

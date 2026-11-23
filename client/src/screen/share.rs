@@ -27,11 +27,14 @@ pub struct Sharer {
 impl Sharer {
     /// `with_audio`: also capture audio. If audio fails to start, video
     /// still runs and the reason is available via [`Sharer::audio_error`].
+    /// `hardware`: Windows prepares and encodes frames on the graphics card
+    /// when it can; ignored elsewhere.
     /// Captured frames also go to `preview` while the UI asks for them.
     pub fn start(
         source: SourceId,
         quality: Quality,
         with_audio: bool,
+        hardware: bool,
         out: tokio::sync::mpsc::Sender<(MediaKind, Vec<u8>)>,
         preview: Arc<Preview>,
         ctx: egui::Context,
@@ -55,13 +58,20 @@ impl Sharer {
             ended: ended.clone(),
             quality,
             out,
+            #[cfg(windows)]
+            hardware,
         };
+        #[cfg(not(windows))]
+        let _ = hardware;
         std::thread::Builder::new()
             .name("screen-encoder".into())
             .spawn(move || enc.run())
             .map_err(|e| e.to_string())?;
 
-        let sink = FrameSink::new(tx, pending, ended.clone(), ctx, counters.clone(), quality);
+        #[cfg_attr(not(windows), allow(unused_mut))]
+        let mut sink = FrameSink::new(tx, pending, ended.clone(), ctx, counters.clone(), quality);
+        #[cfg(windows)]
+        sink.set_hardware(hardware);
         let capture = match capture::start(source, sink) {
             Ok(c) => c,
             Err(e) => {
@@ -147,7 +157,7 @@ mod tests {
         };
         let want: usize = std::env::var("CHUMLY_TEST_FRAMES").ok().and_then(|v| v.parse().ok()).unwrap_or(10);
         let sharer =
-            Sharer::start(SourceId::Monitor(1), quality, false, tx, Default::default(), egui::Context::default())
+            Sharer::start(SourceId::Monitor(1), quality, false, true, tx, Default::default(), egui::Context::default())
                 .unwrap();
         let mut asm = Assembler::default();
         let mut dec = Decoder::new().unwrap();
@@ -186,7 +196,7 @@ mod tests {
         let secs: u64 = std::env::var("CHUMLY_TEST_SECS").ok().and_then(|v| v.parse().ok()).unwrap_or(6);
         let (tx, mut rx) = tokio::sync::mpsc::channel(8192);
         let sharer =
-            Sharer::start(SourceId::Monitor(1), quality, false, tx, Default::default(), egui::Context::default())
+            Sharer::start(SourceId::Monitor(1), quality, false, true, tx, Default::default(), egui::Context::default())
                 .unwrap();
         // CHUMLY_TEST_NODECODE=1: only the sharer runs, so the process CPU is its cost.
         let decode = std::env::var("CHUMLY_TEST_NODECODE").is_err();
@@ -223,6 +233,7 @@ mod tests {
         let enc = ld(&tm.encoded).max(1);
         println!("{} in {el:.1} s, source {}", quality.label(), monitor_size(1));
         println!("  process CPU {:.1}% of all cores ({:.0}% of one)", cpu / el / cores * 100.0, cpu / el * 100.0);
+        println!("  encoder: {}", c.encoder());
         println!("  from Windows: {:.1} fps, skipped (encoder busy): {busy}", captured as f64 / el);
         println!(
             "  copy {:.1} ms, downscale {:.1} ms per frame",

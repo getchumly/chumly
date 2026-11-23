@@ -45,8 +45,9 @@ pub fn sources() -> Vec<Source> {
 struct Handler {
     sink: FrameSink,
     last: Option<Instant>,
-    /// Frames are prepared on the GPU while this works; after an error, or
-    /// with `CHUMLY_SCREEN_CPU=1` set, on the CPU like on other platforms.
+    /// Frames are prepared on the GPU while this works; after an error, with
+    /// hardware acceleration off, or with `CHUMLY_SCREEN_CPU=1` set, on the
+    /// CPU like on other platforms.
     gpu: Option<GpuPrep>,
     use_gpu: bool,
 }
@@ -64,10 +65,10 @@ impl Handler {
             None => self.gpu.insert(GpuPrep::new(frame.device(), frame.device_context())?),
         };
         let (dw, dh) = self.sink.target_size(desc.Width, desc.Height);
-        let mut i420 = Vec::new();
+        let mut nv12 = Vec::new();
         let (src, dst) = ((desc.Width, desc.Height), (dw, dh));
-        prep.convert(frame.device_context(), frame.as_raw_texture(), desc.Format, src, dst, &mut i420)?;
-        Ok(Captured { width: dw as usize, height: dh as usize, pixels: Pixels::I420(i420) })
+        prep.convert(frame.device_context(), frame.as_raw_texture(), desc.Format, src, dst, &mut nv12)?;
+        Ok(Captured { width: dw as usize, height: dh as usize, pixels: Pixels::Nv12(nv12) })
     }
 }
 
@@ -76,7 +77,7 @@ impl GraphicsCaptureApiHandler for Handler {
     type Error = String;
 
     fn new(ctx: Context<Self::Flags>) -> Result<Self, Self::Error> {
-        let use_gpu = std::env::var_os("CHUMLY_SCREEN_CPU").is_none();
+        let use_gpu = ctx.flags.hardware() && std::env::var_os("CHUMLY_SCREEN_CPU").is_none();
         Ok(Self { sink: ctx.flags, last: None, gpu: None, use_gpu })
     }
 

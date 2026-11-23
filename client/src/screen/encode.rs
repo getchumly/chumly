@@ -1,6 +1,8 @@
 //! The sharer's encoder thread, the same on every platform: takes captured
 //! frames, encodes them with OpenH264, sends the fragments and hands frames
-//! to our own preview.
+//! to our own preview. On Windows, frames prepared on the GPU go to the
+//! graphics card's own encoder instead while it works (`encode/mf.rs`,
+//! compiled only there).
 
 use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -16,6 +18,9 @@ use shared::media::MediaKind;
 use super::capture::{Captured, Pixels};
 use super::preview::{Preview, PreviewMode, THUMBNAIL_INTERVAL, preview_image};
 use super::{Counters, Quality, Timing, packet};
+
+#[cfg(windows)]
+mod mf;
 
 /// Keyframes no more often than this, however many viewers ask.
 const MIN_KEYFRAME_INTERVAL: Duration = Duration::from_millis(300);
@@ -70,6 +75,10 @@ pub(super) struct EncoderThread {
     pub(super) quality: Quality,
     pub(super) out: tokio::sync::mpsc::Sender<(MediaKind, Vec<u8>)>,
     pub(super) counters: Arc<Counters>,
+    /// Windows: encode on the graphics card when it can ("Hardware
+    /// acceleration" in the share dialog).
+    #[cfg(windows)]
+    pub(super) hardware: bool,
 }
 
 impl EncoderThread {
@@ -89,6 +98,10 @@ impl EncoderThread {
         let mut frame_id: u32 = 0;
         let mut bytes = Vec::new();
         let mut preview = PreviewState { mode: PreviewMode::Off, at: None, stale: false };
+        #[cfg(windows)]
+        let mut hardware = mf::Hardware::new(self.hardware, self.quality);
+        #[cfg(windows)]
+        let mut i420 = Vec::new();
 
         while !self.stop.load(Ordering::Relaxed) {
             let fresh = match self.rx.recv_timeout(Duration::from_millis(100)) {
@@ -122,6 +135,19 @@ impl EncoderThread {
 
             let t = Instant::now();
             let (width, height) = (frame.width, frame.height);
+            // Windows: frames prepared on the GPU go to the hardware encoder
+            // while it works; otherwise on to OpenH264 below.
+            #[cfg(windows)]
+            if let Pixels::Nv12(nv12) = &frame.pixels
+                && let Some(frames) = hardware.encode(nv12, width, height, want_key, &self.counters)
+            {
+                self.count_encoded(t);
+                for f in frames {
+                    self.emit(&mut frame_id, f.keyframe, &f.data);
+                }
+                self.update_preview(Some(frame), &mut preview);
+                continue;
+            }
             let stream = match &frame.pixels {
                 Pixels::Bgra(bgra) => {
                     let buf = match &mut yuv {
@@ -131,15 +157,16 @@ impl EncoderThread {
                     buf.read_bgra8(BgraSliceU8::new(bgra, (width, height)));
                     encoder.encode(buf)
                 }
-                // Windows only: prepared on the GPU, already in the encoder's format.
+                // Windows only: prepared on the GPU, but the hardware encoder
+                // is off or failed.
                 #[cfg(windows)]
-                Pixels::I420(data) => encoder.encode(&super::capture::I420Frame { data, width, height }),
+                Pixels::Nv12(nv12) => {
+                    super::capture::nv12_to_i420(nv12, width, height, &mut i420);
+                    encoder.encode(&super::capture::I420Frame { data: &i420, width, height })
+                }
             }
             .map_err(|e| e.to_string())?;
-            let timing = &self.counters.timing;
-            let us = Timing::add(&timing.encode_us, t);
-            timing.encode_max_us.fetch_max(us, Ordering::Relaxed);
-            timing.encoded.fetch_add(1, Ordering::Relaxed);
+            self.count_encoded(t);
             let kind = stream.frame_type();
             if matches!(kind, FrameType::Skip | FrameType::Invalid) {
                 continue;
@@ -147,16 +174,28 @@ impl EncoderThread {
             let keyframe = matches!(kind, FrameType::IDR | FrameType::I);
             bytes.clear();
             stream.write_vec(&mut bytes);
-            if bytes.is_empty() {
-                continue;
-            }
-            self.counters.timing.bytes.fetch_add(bytes.len() as u64, Ordering::Relaxed);
-            self.send_frame(frame_id, keyframe, &bytes);
-            frame_id = frame_id.wrapping_add(1);
+            self.emit(&mut frame_id, keyframe, &bytes);
             // After sending, so the preview does not delay the stream.
             self.update_preview(Some(frame), &mut preview);
         }
         Ok(())
+    }
+
+    fn count_encoded(&self, started: Instant) {
+        let timing = &self.counters.timing;
+        let us = Timing::add(&timing.encode_us, started);
+        timing.encode_max_us.fetch_max(us, Ordering::Relaxed);
+        timing.encoded.fetch_add(1, Ordering::Relaxed);
+    }
+
+    /// Sends one encoded frame.
+    fn emit(&self, frame_id: &mut u32, keyframe: bool, data: &[u8]) {
+        if data.is_empty() {
+            return;
+        }
+        self.counters.timing.bytes.fetch_add(data.len() as u64, Ordering::Relaxed);
+        self.send_frame(*frame_id, keyframe, data);
+        *frame_id = frame_id.wrapping_add(1);
     }
 
     /// Hands `frame` to the UI if the preview wants it: right after the mode
@@ -179,7 +218,7 @@ impl EncoderThread {
         let image = match &frame.pixels {
             Pixels::Bgra(bgra) => preview_image(bgra, w, h, mode),
             #[cfg(windows)]
-            Pixels::I420(data) => preview_image(&super::capture::i420_to_bgra(data, w, h), w, h, mode),
+            Pixels::Nv12(nv12) => preview_image(&super::capture::nv12_to_bgra(nv12, w, h), w, h, mode),
         };
         self.preview.put(image);
         self.ctx.request_repaint_of(egui::ViewportId::ROOT);

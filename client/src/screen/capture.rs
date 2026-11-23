@@ -19,7 +19,7 @@ use super::{Counters, Quality, Timing};
 #[cfg(windows)]
 mod gpu;
 #[cfg(windows)]
-pub(super) use gpu::{I420Frame, i420_to_bgra};
+pub(super) use gpu::{I420Frame, nv12_to_bgra, nv12_to_i420};
 #[cfg(windows)]
 mod win;
 #[cfg(windows)]
@@ -93,10 +93,10 @@ pub(super) enum Pixels {
     /// Downscaled on the CPU.
     Bgra(Vec<u8>),
     /// Windows only: downscaled and converted on the GPU (`capture/gpu.rs`):
-    /// the Y plane, then U, then V, the encoder's own format. Does not exist
-    /// in other builds, so their path is untouched by it.
+    /// the Y plane, then interleaved U and V, the hardware encoder's format.
+    /// Does not exist in other builds, so their path is untouched by it.
     #[cfg(windows)]
-    I420(Vec<u8>),
+    Nv12(Vec<u8>),
 }
 
 /// Where a capture backend puts its frames.
@@ -112,6 +112,10 @@ pub(super) struct FrameSink {
     /// Time between frames at the stream's frame rate.
     interval: Duration,
     max_height: u32,
+    /// Windows: prepare frames on the GPU ("Hardware acceleration" in the
+    /// share dialog).
+    #[cfg(windows)]
+    hardware: bool,
 }
 
 // Only used by capture backends.
@@ -126,7 +130,28 @@ impl FrameSink {
         quality: Quality,
     ) -> Self {
         let interval = Duration::from_secs_f64(1.0 / quality.fps() as f64);
-        Self { out, pending, ended, ctx, counters, interval, max_height: quality.max_height() }
+        Self {
+            out,
+            pending,
+            ended,
+            ctx,
+            counters,
+            interval,
+            max_height: quality.max_height(),
+            #[cfg(windows)]
+            hardware: true,
+        }
+    }
+
+    /// Windows: whether to prepare frames on the GPU.
+    #[cfg(windows)]
+    pub(super) fn set_hardware(&mut self, on: bool) {
+        self.hardware = on;
+    }
+
+    #[cfg(windows)]
+    pub(super) fn hardware(&self) -> bool {
+        self.hardware
     }
 
     /// Time between frames at the stream's frame rate.
