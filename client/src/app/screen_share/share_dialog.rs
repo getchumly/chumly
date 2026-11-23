@@ -12,6 +12,8 @@ pub(in crate::app) struct ShareDialog {
     pub(in crate::app) selected: Option<SourceId>,
     pub(in crate::app) quality: Quality,
     pub(in crate::app) audio: bool,
+    /// Windows: prepare and encode on the graphics card.
+    pub(in crate::app) hardware: bool,
 }
 
 /// One selectable source row in the share dialog.
@@ -148,10 +150,14 @@ impl App {
                         theme::checkbox(ui, &mut off, t.share_audio, Some(t.share_audio_unavailable))
                     });
                 }
+                // Windows only: the graphics card prepares and encodes the video.
+                #[cfg(windows)]
+                theme::checkbox(ui, &mut d.hardware, t.share_hardware, Some(t.share_hardware_tip));
+                let note = if cfg!(windows) && d.hardware { t.share_note_hw } else { t.share_note };
                 ui.horizontal(|ui| {
                     ui.spacing_mut().item_spacing.x = 8.0;
                     ui.label(theme::text(icons::CPU, 14.0).color(p.t3));
-                    ui.add(egui::Label::new(theme::text(t.share_note, 12.0).color(p.t3)).wrap());
+                    ui.add(egui::Label::new(theme::text(note, 12.0).color(p.t3)).wrap());
                 });
             },
             |ui| {
@@ -170,7 +176,7 @@ impl App {
             start = selected;
         }
         if let Some(source) = start {
-            actions.push(Action::StartShare(source, d.quality, d.audio));
+            actions.push(Action::StartShare(source, d.quality, d.audio, d.hardware));
         } else if !cancel && !r.close_requested {
             self.screen.dialog = Some(d);
         }

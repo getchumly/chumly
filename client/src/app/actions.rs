@@ -39,7 +39,8 @@ pub(super) enum Action {
     ToggleDeafen,
     SendChat,
     OpenShare,
-    StartShare(SourceId, Quality, bool),
+    /// Source, quality, with audio, hardware acceleration (Windows).
+    StartShare(SourceId, Quality, bool, bool),
     SetStreamVolume(String, f32),
     StopShare,
     Watch(UserId, String),
@@ -283,17 +284,21 @@ impl App {
                     selected,
                     quality: self.cfg.share.quality,
                     audio: self.cfg.share.audio,
+                    hardware: self.cfg.share.hardware,
                 });
             }
-            Action::StartShare(source, quality, audio) => {
+            Action::StartShare(source, quality, audio, hardware) => {
                 self.stop_share(false);
-                if self.cfg.share.quality != quality || self.cfg.share.audio != audio {
+                let s = &self.cfg.share;
+                if s.quality != quality || s.audio != audio || s.hardware != hardware {
                     self.cfg.share.quality = quality;
                     self.cfg.share.audio = audio;
+                    self.cfg.share.hardware = hardware;
                     self.cfg_dirty = true;
                 }
                 let preview = self.screen.preview.clone();
-                match Sharer::start(source, quality, audio, self.screen.tx.clone(), preview, self.ctx.clone()) {
+                match Sharer::start(source, quality, audio, hardware, self.screen.tx.clone(), preview, self.ctx.clone())
+                {
                     Ok(sharer) => {
                         if let Some(e) = sharer.audio_error() {
                             tracing::warn!("screen share audio: {e}");

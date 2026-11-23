@@ -544,6 +544,7 @@ mod tests {
             SourceId::Monitor(1),
             crate::screen::Quality::P720F30,
             false,
+            false,
             tx,
             Default::default(),
             eframe::egui::Context::default(),
@@ -563,6 +564,7 @@ mod tests {
             let sharer = crate::screen::Sharer::start(
                 win.id,
                 crate::screen::Quality::P720F30,
+                false,
                 false,
                 tx,
                 Default::default(),

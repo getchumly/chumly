@@ -112,6 +112,23 @@ pub struct Counters {
     pub waiting_key: AtomicBool,
     /// Per-stage timings in microseconds, for diagnostics.
     pub timing: Timing,
+    /// Windows: the hardware encoder in use, or "OpenH264" after falling
+    /// back; empty until the first frame is encoded.
+    #[cfg(windows)]
+    encoder: std::sync::Mutex<String>,
+}
+
+#[cfg(windows)]
+impl Counters {
+    pub(crate) fn set_encoder(&self, name: &str) {
+        if let Ok(mut e) = self.encoder.lock() {
+            name.clone_into(&mut e);
+        }
+    }
+
+    pub fn encoder(&self) -> String {
+        self.encoder.lock().map(|e| e.clone()).unwrap_or_default()
+    }
 }
 
 /// Filled by the capture, encoder and decoder; read by the viewer window's

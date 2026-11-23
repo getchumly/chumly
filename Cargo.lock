@@ -772,6 +772,7 @@ dependencies = [
  "tracing",
  "tracing-subscriber",
  "wasapi",
+ "windows 0.62.2",
  "windows-capture",
  "windows-sys 0.61.2",
  "winit",

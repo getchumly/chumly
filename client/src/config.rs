@@ -166,11 +166,13 @@ pub struct ShareConfig {
     pub audio: bool,
     /// The thumbnail of our own share in the "me" block.
     pub preview: bool,
+    /// Windows: prepare and encode frames on the graphics card when it can.
+    pub hardware: bool,
 }
 
 impl Default for ShareConfig {
     fn default() -> Self {
-        Self { quality: Quality::P1080F30, audio: true, preview: true }
+        Self { quality: Quality::P1080F30, audio: true, preview: true, hardware: true }
     }
 }
 

@@ -11,6 +11,23 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+**Update:** client only (servers can stay).
+
+### Added
+- Client (Windows): **screen sharing encodes on the graphics card** (NVIDIA, AMD, Intel)
+  when it can: on a 2560×1440 monitor at 1080p 60 the sharer's CPU went from about 20% to
+  about 2%, and the stream holds 60 frames per second. If the card has no encoder or it
+  fails, the share continues on the CPU without interruption. The new "Hardware
+  acceleration" checkbox in the share dialog (on by default) turns it off, for example if
+  viewers see artifacts. Viewers on any system decode the stream as before.
+
+### Changed
+- Client (Windows): **captured frames are downscaled on the graphics card**, so only the
+  finished frame is read back. This feeds the hardware encoder above; on computers whose
+  card has no encoder, the CPU still encodes, and frames are a little cheaper than before
+  (about 8% less CPU per frame, more frames get through). If the card cannot do it either,
+  the client uses the previous path on its own. Linux is unchanged.
+
 ## [0.3.0] - 2026-11-22
 
 **Update:** client only (servers can stay).
