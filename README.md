@@ -10,7 +10,8 @@ A small self-hosted voice chat: a desktop client and a lightweight server, writt
 - Push-to-talk or voice activation, global hotkeys for mute/deafen
 - Channels with user limits, text chat, private messages
 - Screen sharing (H.264) with audio on Windows and Linux (X11 and Wayland), and a live
-  preview of your own stream; everyone sees who is watching
+  preview of your own stream; everyone sees who is watching. On Windows the graphics card
+  encodes the stream when it can (NVIDIA, AMD, Intel), so sharing barely loads the CPU
 - Event sounds in groups that can be silenced one by one, with their own volume
 - Server roles bound to user keys (owner, admin, moderator by default; your own roles with chosen rights), registered nicknames; kick, ban and channel
   management from the client or the server console
