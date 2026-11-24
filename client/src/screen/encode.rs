@@ -222,7 +222,9 @@ impl EncoderThread {
         };
         self.preview.put(image);
         self.ctx.request_repaint_of(egui::ViewportId::ROOT);
-        self.ctx.request_repaint_of(self.preview.window());
+        if mode == PreviewMode::Full {
+            self.ctx.request_repaint_of(self.preview.window());
+        }
     }
 
     fn send_frame(&self, frame_id: u32, keyframe: bool, data: &[u8]) {
