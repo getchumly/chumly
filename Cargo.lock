@@ -737,7 +737,7 @@ dependencies = [
 
 [[package]]
 name = "client"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "ashpd",
@@ -3952,7 +3952,7 @@ dependencies = [
 
 [[package]]
 name = "server"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "bytes",
@@ -3993,7 +3993,7 @@ dependencies = [
 
 [[package]]
 name = "shared"
-version = "0.3.1"
+version = "0.3.2"
 dependencies = [
  "anyhow",
  "prost",
