@@ -11,6 +11,12 @@ a client and a server one version step apart keep working.
 
 ## [Unreleased]
 
+**Update:** client only (servers can stay).
+
+### Fixed
+- Client: while sharing your screen and watching someone else's stream, an empty window no
+  longer flashes up and closes every time the mouse moves.
+
 ## [0.3.1] - 2026-11-23
 
 **Update:** client only (servers can stay).
